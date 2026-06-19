@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FlowLab — Sign In</title>
+  <meta name="theme-color" content="#0A0812">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="auth-page">
+  <div class="auth-box">
+
+    <div class="auth-logo">
+      <div class="wordmark">Flow<span>Lab</span></div>
+      <p>Sign in to your workspace</p>
+    </div>
+
+    <!-- Inline error area — message comes directly from Supabase,
+         which returns the correct string for whichever Auth setting is active.
+         No conditional logic here about email confirmation state. -->
+    <div id="login-error" class="inline-error" role="alert"></div>
+
+    <div class="form-group">
+      <label for="email">Email</label>
+      <input type="email" id="email" placeholder="producer@label.com" autocomplete="email" required>
+    </div>
+
+    <div class="form-group">
+      <label for="password">Password</label>
+      <input type="password" id="password" placeholder="••••••••" autocomplete="current-password" required>
+    </div>
+
+    <!-- TODO: OTP-based password reset, v2 -->
+
+    <button id="login-btn" class="btn btn-primary btn-full" type="button">Sign In</button>
+
+    <div class="auth-footer">
+      Don't have an account? <a href="signup.html">Create one</a>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="genres.js"></script>
+<script src="supabase.js"></script>
+<script src="auth.js"></script>
+<script src="app.js"></script>
+<script>
+  const loginBtn   = document.getElementById('login-btn');
+  const emailInput = document.getElementById('email');
+  const passInput  = document.getElementById('password');
+
+  async function handleLogin() {
+    clearError('login-error');
+
+    const email    = emailInput.value.trim();
+    const password = passInput.value;
+
+    if (!email || !password) {
+      showError('login-error', 'Please enter your email and password.');
+      return;
+    }
+
+    const restore = withButtonLoading(loginBtn, 'Signing in…');
+
+    const { data, error } = await window.supabase.auth.signInWithPassword({ email, password });
+
+    restore();
+
+    if (error) {
+      // Surface Supabase's message directly — it already returns the correct
+      // human-readable string for whichever Auth setting is active, e.g.:
+      //   "Email not confirmed" (confirmation ON, link not clicked)
+      //   "Invalid login credentials" (wrong password / unknown email)
+      showError('login-error', error.message);
+      return;
+    }
+
+    // Success — session exists
+    location.href = 'dashboard.html';
+  }
+
+  loginBtn.addEventListener('click', handleLogin);
+
+  // Allow Enter key to submit
+  [emailInput, passInput].forEach(el => {
+    el.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
+  });
+</script>
+
+</body>
+</html>

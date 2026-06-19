@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FlowLab — Where flow gets built</title>
+  <meta name="description" content="The professional lyric workspace for music producers. Transform lyrics across genres with AI.">
+  <meta name="theme-color" content="#0A0812">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icon-192.png">
+  <meta property="og:title" content="FlowLab">
+  <meta property="og:description" content="Where flow gets built.">
+  <meta property="og:image" content="/icon-512.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="page">
+
+  <!-- ── Install Banner ── -->
+  <div id="install-prompt">
+    <p>Install FlowLab for the best experience.</p>
+    <button class="btn btn-sm btn-primary" onclick="triggerInstall()">Install</button>
+    <button class="btn btn-sm btn-ghost" onclick="this.closest('#install-prompt').classList.remove('visible')">✕</button>
+  </div>
+
+  <!-- ── Hero ── -->
+  <section class="landing-hero">
+    <div class="hero-wordmark">Flow<span>Lab</span></div>
+    <p class="hero-tagline">The professional lyric transformation workspace for music producers and their artists.</p>
+    <div class="hero-cta">
+      <a href="signup.html" class="btn btn-primary btn-full">Get started free</a>
+      <a href="login.html" class="btn btn-secondary btn-full">Sign in</a>
+    </div>
+    <div class="flex gap-2" style="flex-wrap:wrap;justify-content:center;">
+      <span class="badge badge-free">Free NLP</span>
+      <span class="badge badge-pro">Pro AI</span>
+      <span class="badge badge-studio">Studio</span>
+    </div>
+  </section>
+
+  <hr class="divider" style="margin:0 var(--space-5);">
+
+  <!-- ── Features ── -->
+  <section class="feature-list">
+    <div class="feature-item">
+      <div class="feat-icon">🎛️</div>
+      <div class="feat-body">
+        <div class="feat-title">Artist Roster Management</div>
+        <div class="feat-desc">Manage your signed artists, capture their voice profiles, and track every session.</div>
+      </div>
+    </div>
+    <div class="feature-item">
+      <div class="feat-icon">🔄</div>
+      <div class="feat-body">
+        <div class="feat-title">Genre Transformation</div>
+        <div class="feat-desc">Transform lyrics between Afrobeat, Hip-Hop, R&amp;B, Reggae, Amapiano, and Pop with a 7-step pipeline.</div>
+      </div>
+    </div>
+    <div class="feature-item">
+      <div class="feat-icon">🤖</div>
+      <div class="feat-body">
+        <div class="feat-title">AI-Powered (Pro &amp; Studio)</div>
+        <div class="feat-desc">Claude AI handles phonetics, cadence, cultural idioms, and voice preservation at a professional level.</div>
+      </div>
+    </div>
+    <div class="feature-item">
+      <div class="feat-icon">📦</div>
+      <div class="feat-body">
+        <div class="feat-title">Export Session Bundles</div>
+        <div class="feat-desc">Download every session as a ZIP bundle — input, output, notes, and metadata. Pro &amp; Studio.</div>
+      </div>
+    </div>
+    <div class="feature-item">
+      <div class="feat-icon">📱</div>
+      <div class="feat-body">
+        <div class="feat-title">Works Offline</div>
+        <div class="feat-desc">Free-tier transforms and the full UI work offline after first load. Install as a PWA.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Footer ── -->
+  <footer class="site-footer">
+    <p>FlowLab &copy; 2025. Where flow gets built.</p>
+  </footer>
+
+</div>
+
+<script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="genres.js"></script>
+<script src="supabase.js"></script>
+<script src="auth.js"></script>
+<script src="app.js"></script>
+<script>
+  // Redirect to dashboard if already signed in
+  (async () => {
+    const { data: { session } } = await window.supabase.auth.getSession();
+    if (session) location.href = 'dashboard.html';
+  })();
+
+  // Register service worker
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js');
+  }
+</script>
+
+</body>
+</html>

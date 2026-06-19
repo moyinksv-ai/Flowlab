@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FlowLab — Dashboard</title>
+  <meta name="theme-color" content="#0A0812">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="page">
+
+  <!-- ── Top Nav ── -->
+  <nav class="top-nav">
+    <span class="logo">Flow<span>Lab</span></span>
+    <div class="nav-right">
+      <span id="nav-producer-tier"></span>
+      <span id="nav-producer-name" class="producer-name"></span>
+      <button class="btn btn-ghost btn-sm" data-logout>Sign out</button>
+    </div>
+  </nav>
+
+  <div class="container" style="padding-top:var(--space-5);padding-bottom:var(--space-10);">
+
+    <!-- ── First-login empty state / Artist list ── -->
+    <div class="section-header">
+      <span class="section-title">Your Artists</span>
+      <a href="artist.html" class="btn btn-sm btn-primary">+ Add Artist</a>
+    </div>
+
+    <div id="artists-container">
+      <!-- Loading state -->
+      <div class="empty-state" id="artists-loading">
+        <span class="spinner spinner-lg"></span>
+      </div>
+    </div>
+
+    <hr class="divider">
+
+    <!-- ── Recent Sessions ── -->
+    <div class="section-header">
+      <span class="section-title">Recent Sessions</span>
+      <a href="session.html" class="btn btn-sm btn-secondary">New Session</a>
+    </div>
+
+    <div id="sessions-container">
+      <div class="empty-state" id="sessions-loading">
+        <span class="spinner spinner-lg"></span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="genres.js"></script>
+<script src="supabase.js"></script>
+<script src="auth.js"></script>
+<script src="app.js"></script>
+<script>
+(async () => {
+  // ── Auth guard ────────────────────────────────────────────
+  const auth = await requireAuth();
+  if (!auth) return;
+
+  const producer = await getProducer(auth.user.id);
+  if (!producer) { location.href = 'login.html'; return; }
+
+  await populateTopNav(producer);
+
+  // ── Fetch artists ─────────────────────────────────────────
+  const { data: artists, error: artistsErr } = await window.supabase
+    .from('artists')
+    .select('*')
+    .eq('producer_id', producer.id)
+    .order('created_at', { ascending: false });
+
+  // ── Fetch artist stats (single RPC — no N+1) ─────────────
+  const { data: statsRows } = await window.supabase
+    .rpc('get_artist_stats', { p_producer_id: producer.id });
+
+  // Build a map: artist_id → stats
+  const statsMap = {};
+  (statsRows || []).forEach(s => { statsMap[s.artist_id] = s; });
+
+  // ── Render artist cards ───────────────────────────────────
+  const artistsContainer = document.getElementById('artists-container');
+  artistsContainer.innerHTML = '';
+
+  if (artistsErr || !artists || artists.length === 0) {
+    artistsContainer.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">🎤</div>
+        <h3>No artists yet</h3>
+        <p>Add your first artist to start building sessions.</p>
+        <a href="artist.html" class="btn btn-primary btn-sm mt-3">Add Artist</a>
+      </div>`;
+  } else {
+    for (const artist of artists) {
+      const stats = statsMap[artist.id] || { session_count: 0, last_session_at: null };
+      const card  = document.createElement('a');
+      card.className = 'artist-card';
+      card.href      = `artist.html?id=${artist.id}`;
+      card.style.textDecoration = 'none';
+      card.style.display = 'flex';
+      card.style.marginBottom = 'var(--space-2)';
+
+      const genre   = GENRES[artist.genre];
+      const emoji   = genre?.emoji || '🎵';
+      const geneLbl = genre?.label || artist.genre;
+
+      card.innerHTML = `
+        <div class="avatar" id="avatar-${artist.id}">${emoji}</div>
+        <div class="artist-info">
+          <div class="artist-name">${escapeHTML(artist.name)}</div>
+          <div class="artist-meta">${geneLbl} · added ${formatRelativeTime(artist.created_at)}</div>
+        </div>
+        <div class="artist-stats">
+          <div class="stat-num">${stats.session_count}</div>
+          <div class="stat-label">sessions</div>
+          <div class="artist-meta" style="margin-top:2px;">${stats.last_session_at ? formatRelativeTime(stats.last_session_at) : '—'}</div>
+        </div>`;
+
+      artistsContainer.appendChild(card);
+
+      // Resolve avatar async (non-blocking)
+      if (artist.avatar_path) {
+        getAvatarUrl(artist.avatar_path).then(url => {
+          if (url) {
+            const el = document.getElementById(`avatar-${artist.id}`);
+            if (el) el.innerHTML = `<img src="${url}" alt="${escapeHTML(artist.name)}" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;">`;
+          }
+        });
+      }
+    }
+  }
+
+  // ── Fetch recent sessions (last 5, with artist name join) ─
+  const { data: sessions } = await window.supabase
+    .from('sessions')
+    .select('*, artists(name)')
+    .eq('producer_id', producer.id)
+    .order('created_at', { ascending: false })
+    .limit(5);
+
+  const sessionsContainer = document.getElementById('sessions-container');
+  sessionsContainer.innerHTML = '';
+
+  if (!sessions || sessions.length === 0) {
+    sessionsContainer.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">🎼</div>
+        <h3>No sessions yet</h3>
+        <p>Start a new session to transform your first lyric.</p>
+        <a href="session.html" class="btn btn-secondary btn-sm mt-3">New Session</a>
+      </div>`;
+  } else {
+    sessions.forEach(s => {
+      const srcG = GENRES[s.source_genre];
+      const tgtG = GENRES[s.target_genre];
+      const row = document.createElement('a');
+      row.className = 'session-row';
+      row.href = `session.html?id=${s.id}`;
+      row.style.marginBottom = 'var(--space-2)';
+      row.innerHTML = `
+        <div class="session-info">
+          <div class="session-title">${escapeHTML(s.artists?.name || 'No artist')} — ${escapeHTML(s.input_lyrics.slice(0, 40))}…</div>
+          <div class="session-genres">
+            <span>${srcG?.emoji || ''} ${srcG?.label || s.source_genre}</span>
+            <span class="arrow">→</span>
+            <span>${tgtG?.emoji || ''} ${tgtG?.label || s.target_genre}</span>
+          </div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;">
+          <div class="text-xs text-muted">${formatRelativeTime(s.created_at)}</div>
+          <span class="badge ${s.tier_used === 'ai' ? 'badge-ai' : 'badge-free'}" style="margin-top:4px;">${s.tier_used === 'ai' ? 'AI' : 'Free'}</span>
+        </div>`;
+      sessionsContainer.appendChild(row);
+    });
+  }
+})();
+
+function escapeHTML(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+</script>
+
+</body>
+</html>

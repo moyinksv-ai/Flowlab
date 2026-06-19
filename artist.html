@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FlowLab — Artist</title>
+  <meta name="theme-color" content="#0A0812">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="page">
+
+  <!-- ── Top Nav ── -->
+  <nav class="top-nav">
+    <a href="dashboard.html" class="btn btn-ghost btn-sm" style="padding-left:0;">← Back</a>
+    <span class="logo">Flow<span>Lab</span></span>
+    <div class="nav-right">
+      <span id="nav-producer-tier"></span>
+      <span id="nav-producer-name" class="producer-name"></span>
+    </div>
+  </nav>
+
+  <div class="container" style="padding-top:var(--space-5);padding-bottom:var(--space-10);">
+
+    <h2 id="page-title" style="margin-bottom:var(--space-5);">Add Artist</h2>
+
+    <div id="artist-error" class="inline-error" role="alert"></div>
+    <div id="artist-success" class="inline-success" role="status"></div>
+
+    <!-- ── Artist Details ── -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Artist Details</span>
+        <div class="avatar avatar-lg" id="avatar-preview">🎤</div>
+      </div>
+
+      <div class="form-group">
+        <label for="artist-name">Artist Name</label>
+        <input type="text" id="artist-name" placeholder="Stage name" required>
+      </div>
+
+      <div class="form-group">
+        <label for="artist-genre">Primary Genre</label>
+        <select id="artist-genre">
+          <option value="">Select a genre…</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="artist-avatar">Avatar Image (optional)</label>
+        <input type="file" id="artist-avatar" accept="image/*">
+        <p class="form-hint">JPG, PNG or WebP. Stored privately.</p>
+      </div>
+    </div>
+
+    <!-- ── Voice Profile ── -->
+    <div class="card" style="margin-top:var(--space-3);">
+      <div class="card-header">
+        <span class="card-title">Voice Profile</span>
+      </div>
+      <p class="text-sm text-secondary" style="margin-bottom:var(--space-3);">
+        Paste sample lyrics that capture this artist's unique style. The AI uses this during transformation to preserve their voice.
+      </p>
+      <div class="form-group">
+        <label for="sample-lyrics">Sample Lyrics</label>
+        <textarea id="sample-lyrics" placeholder="Paste 1–3 verses of their most representative lyrics…" rows="6"></textarea>
+      </div>
+    </div>
+
+    <!-- ── Actions ── -->
+    <div style="display:flex;gap:var(--space-3);margin-top:var(--space-5);">
+      <button id="save-btn" class="btn btn-primary" style="flex:1;">Save Artist</button>
+      <button id="delete-btn" class="btn btn-danger hidden">Delete</button>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="genres.js"></script>
+<script src="supabase.js"></script>
+<script src="auth.js"></script>
+<script src="app.js"></script>
+<script>
+let _producer  = null;
+let _artistId  = null; // set in EDIT mode
+let _isEdit    = false;
+
+(async () => {
+  // ── Auth guard ───────────────────────────────────────────
+  const auth = await requireAuth();
+  if (!auth) return;
+
+  _producer = await getProducer(auth.user.id);
+  if (!_producer) { location.href = 'login.html'; return; }
+
+  await populateTopNav(_producer);
+
+  // ── Populate genre dropdown ──────────────────────────────
+  const genreSelect = document.getElementById('artist-genre');
+  Object.entries(GENRES).forEach(([key, g]) => {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = `${g.emoji}  ${g.label}`;
+    genreSelect.appendChild(opt);
+  });
+
+  // ── Detect add vs edit mode ──────────────────────────────
+  const params   = new URLSearchParams(location.search);
+  const artistId = params.get('id');
+
+  if (artistId) {
+    _isEdit   = true;
+    _artistId = artistId;
+    document.getElementById('page-title').textContent = 'Edit Artist';
+    document.getElementById('delete-btn').classList.remove('hidden');
+    await loadArtist(artistId);
+  }
+
+  // ── Avatar preview ───────────────────────────────────────
+  document.getElementById('artist-avatar').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const el  = document.getElementById('avatar-preview');
+    el.innerHTML = `<img src="${url}" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;">`;
+  });
+
+  // ── Wire buttons ─────────────────────────────────────────
+  document.getElementById('save-btn').addEventListener('click', handleSave);
+  document.getElementById('delete-btn').addEventListener('click', handleDelete);
+})();
+
+async function loadArtist(artistId) {
+  const { data: artist, error } = await window.supabase
+    .from('artists')
+    .select('*')
+    .eq('id', artistId)
+    .eq('producer_id', _producer.id)
+    .single();
+
+  if (error || !artist) {
+    showError('artist-error', 'Artist not found.');
+    return;
+  }
+
+  document.getElementById('artist-name').value  = artist.name;
+  document.getElementById('artist-genre').value = artist.genre;
+
+  if (artist.avatar_path) {
+    const url = await getAvatarUrl(artist.avatar_path);
+    if (url) {
+      const el = document.getElementById('avatar-preview');
+      el.innerHTML = `<img src="${url}" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;">`;
+    }
+  }
+
+  // Load voice profile
+  const { data: vp } = await window.supabase
+    .from('voice_profiles')
+    .select('*')
+    .eq('artist_id', artistId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (vp) {
+    document.getElementById('sample-lyrics').value = vp.sample_lyrics || '';
+  }
+}
+
+async function handleSave() {
+  clearError('artist-error');
+
+  const name         = document.getElementById('artist-name').value.trim();
+  const genre        = document.getElementById('artist-genre').value;
+  const avatarFile   = document.getElementById('artist-avatar').files[0];
+  const sampleLyrics = document.getElementById('sample-lyrics').value.trim();
+
+  if (!name)  { showError('artist-error', 'Artist name is required.'); return; }
+  if (!genre) { showError('artist-error', 'Please select a genre.'); return; }
+
+  const btn     = document.getElementById('save-btn');
+  const restore = withButtonLoading(btn, _isEdit ? 'Saving…' : 'Adding…');
+
+  try {
+    if (_isEdit) {
+      await updateArtist(name, genre, avatarFile, sampleLyrics);
+    } else {
+      await addArtist(name, genre, avatarFile, sampleLyrics);
+    }
+  } catch (err) {
+    showError('artist-error', err.message || 'Something went wrong.');
+    restore();
+  }
+}
+
+async function addArtist(name, genre, avatarFile, sampleLyrics) {
+  // Step 1: Insert artist row WITHOUT avatar_path — we need the returned id
+  const { data: artist, error: insertErr } = await window.supabase
+    .from('artists')
+    .insert({ producer_id: _producer.id, name, genre })
+    .select()
+    .single();
+
+  if (insertErr || !artist) throw new Error(insertErr?.message || 'Failed to create artist.');
+
+  const artistId = artist.id;
+
+  // Step 2: Upload avatar (if provided) — path requires the artist id
+  if (avatarFile) {
+    const ext  = avatarFile.name.split('.').pop().toLowerCase();
+    const path = `${_producer.id}/${artistId}/avatar.${ext}`;
+    const { error: uploadErr } = await window.supabase.storage
+      .from('stems')
+      .upload(path, avatarFile, { upsert: true });
+
+    if (!uploadErr) {
+      // Update artist row with the storage path
+      await window.supabase
+        .from('artists')
+        .update({ avatar_path: path })
+        .eq('id', artistId);
+    }
+  }
+
+  // Step 3: Insert voice profile (if lyrics provided)
+  if (sampleLyrics) {
+    const { error: vpErr } = await window.supabase
+      .from('voice_profiles')
+      .insert({ artist_id: artistId, sample_lyrics: sampleLyrics });
+    if (vpErr) console.warn('Voice profile insert failed:', vpErr.message);
+  }
+
+  location.href = 'dashboard.html';
+}
+
+async function updateArtist(name, genre, avatarFile, sampleLyrics) {
+  const updates = { name, genre };
+
+  // Upload new avatar if provided
+  if (avatarFile) {
+    const ext  = avatarFile.name.split('.').pop().toLowerCase();
+    const path = `${_producer.id}/${_artistId}/avatar.${ext}`;
+    const { error: uploadErr } = await window.supabase.storage
+      .from('stems')
+      .upload(path, avatarFile, { upsert: true });
+
+    if (!uploadErr) updates.avatar_path = path;
+  }
+
+  const { error: updateErr } = await window.supabase
+    .from('artists')
+    .update(updates)
+    .eq('id', _artistId)
+    .eq('producer_id', _producer.id);
+
+  if (updateErr) throw new Error(updateErr.message);
+
+  // Upsert voice profile
+  if (sampleLyrics) {
+    // Check for existing profile
+    const { data: existing } = await window.supabase
+      .from('voice_profiles')
+      .select('id')
+      .eq('artist_id', _artistId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existing) {
+      await window.supabase
+        .from('voice_profiles')
+        .update({ sample_lyrics: sampleLyrics })
+        .eq('id', existing.id);
+    } else {
+      await window.supabase
+        .from('voice_profiles')
+        .insert({ artist_id: _artistId, sample_lyrics: sampleLyrics });
+    }
+  }
+
+  showSuccess('artist-success', 'Artist updated.');
+  setTimeout(() => { location.href = 'dashboard.html'; }, 1200);
+}
+
+async function handleDelete() {
+  if (!_artistId) return;
+  if (!confirm(`Delete this artist? This will also delete all their sessions. This cannot be undone.`)) return;
+
+  const btn     = document.getElementById('delete-btn');
+  const restore = withButtonLoading(btn, 'Deleting…');
+
+  const { error } = await window.supabase
+    .from('artists')
+    .delete()
+    .eq('id', _artistId)
+    .eq('producer_id', _producer.id);
+
+  if (error) {
+    showError('artist-error', error.message);
+    restore();
+    return;
+  }
+
+  location.href = 'dashboard.html';
+}
+</script>
+
+</body>
+</html>

@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FlowLab — Session</title>
+  <meta name="theme-color" content="#0A0812">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="page">
+
+  <!-- ── Top Nav ── -->
+  <nav class="top-nav">
+    <a href="dashboard.html" class="btn btn-ghost btn-sm" style="padding-left:0;">← Back</a>
+    <span class="logo">Flow<span>Lab</span></span>
+    <div class="nav-right">
+      <span id="nav-producer-tier"></span>
+      <span id="nav-producer-name" class="producer-name"></span>
+    </div>
+  </nav>
+
+  <div class="session-layout">
+
+    <div id="session-error" class="inline-error" role="alert"></div>
+    <div id="session-success" class="inline-success" role="status"></div>
+
+    <!-- ── Artist + Genre Config ── -->
+    <div class="card">
+      <div class="card-header"><span class="card-title">Session Setup</span></div>
+
+      <div class="form-group">
+        <label for="artist-select">Artist</label>
+        <select id="artist-select">
+          <option value="">No artist (quick session)</option>
+        </select>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3);">
+        <div>
+          <label class="panel-label">Source Genre</label>
+          <div id="source-genre-grid"></div>
+        </div>
+        <div>
+          <label class="panel-label">Target Genre</label>
+          <div id="target-genre-grid"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Input Panel ── -->
+    <div>
+      <div class="panel-label">Input Lyrics</div>
+      <textarea
+        id="input-lyrics"
+        class="lyric-area"
+        placeholder="Paste or type your lyrics here…"
+        rows="8"
+      ></textarea>
+    </div>
+
+    <!-- ── Transform Controls ── -->
+    <div class="transform-controls">
+      <div id="pipeline-container" class="pipeline hidden"></div>
+
+      <div class="transform-btn-row" id="transform-btns">
+        <button id="free-btn" class="btn btn-secondary">
+          🆓 Free Transform
+        </button>
+        <button id="ai-btn" class="btn btn-primary" id="ai-btn">
+          🤖 AI Transform
+        </button>
+      </div>
+
+      <p class="text-xs text-muted" style="text-align:center;" id="tier-note"></p>
+    </div>
+
+    <!-- ── Output Panel ── -->
+    <div id="output-section" class="hidden">
+      <div class="panel-label" style="display:flex;align-items:center;justify-content:space-between;">
+        <span>Output Lyrics</span>
+        <span id="output-badge"></span>
+      </div>
+      <textarea id="output-lyrics" class="lyric-area" readonly rows="8" placeholder="Transformed lyrics appear here…"></textarea>
+
+      <!-- Genre score (AI only) -->
+      <div id="genre-score" class="card hidden" style="margin-top:var(--space-3);">
+        <div class="card-header"><span class="card-title">Genre Score</span></div>
+        <div class="score-grid">
+          <div class="score-item">
+            <span class="score-value" id="score-rhythm">—</span>
+            <span class="score-label">Rhythm</span>
+          </div>
+          <div class="score-item">
+            <span class="score-value" id="score-vocab">—</span>
+            <span class="score-label">Vocab</span>
+          </div>
+          <div class="score-item">
+            <span class="score-value" id="score-auth">—</span>
+            <span class="score-label">Auth.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Changes log -->
+      <div id="changes-section" class="card hidden" style="margin-top:var(--space-3);">
+        <div class="card-header"><span class="card-title">Transform Log</span></div>
+        <ul id="changes-list" class="changes-list"></ul>
+      </div>
+    </div>
+
+    <!-- ── Session Bundle (save + export, pro/studio only) ── -->
+    <div id="bundle-section" class="card hidden">
+      <div class="card-header"><span class="card-title">Session Bundle</span></div>
+
+      <div class="form-group">
+        <label for="session-notes">Session Notes</label>
+        <textarea id="session-notes" rows="3" placeholder="Optional notes, references, direction…"></textarea>
+      </div>
+
+      <div style="display:flex;gap:var(--space-3);">
+        <button id="save-session-btn" class="btn btn-secondary" style="flex:1;">Save Session</button>
+        <button id="export-btn" class="btn btn-primary" style="flex:1;">⬇ Export ZIP</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://unpkg.com/compromise@14.14.0/builds/compromise.min.js"></script>
+<script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="genres.js"></script>
+<script src="supabase.js"></script>
+<script src="auth.js"></script>
+<script src="app.js"></script>
+<script src="nlp.js"></script>
+<script>
+// ── State ─────────────────────────────────────────────────────
+let _producer    = null;
+let _artists     = [];
+let _sourceGenre = null;
+let _targetGenre = null;
+let _lastResult  = null; // { transformed, changes, genreScore?, tier }
+let _savedSessionId = null;
+
+// ── Pipeline steps ────────────────────────────────────────────
+const PIPELINE_STEPS = [
+  { id: 'parse',   label: '1. Parse' },
+  { id: 'struct',  label: '2. Structure' },
+  { id: 'phonetic',label: '3. Phonetic' },
+  { id: 'vocab',   label: '4. Vocabulary' },
+  { id: 'cadence', label: '5. Cadence' },
+  { id: 'rhyme',   label: '6. Rhyme' },
+  { id: 'culture', label: '7. Culture' }
+];
+
+function buildPipeline() {
+  const container = document.getElementById('pipeline-container');
+  container.innerHTML = '';
+  PIPELINE_STEPS.forEach((step, i) => {
+    const el = document.createElement('div');
+    el.className = 'pipeline-step';
+    el.id = `step-${step.id}`;
+    el.innerHTML = `<div class="step-icon">${i + 1}</div><span>${step.label}</span>`;
+    container.appendChild(el);
+  });
+}
+
+async function animatePipeline(delayMs) {
+  const pipeline = document.getElementById('pipeline-container');
+  pipeline.classList.remove('hidden');
+  for (const step of PIPELINE_STEPS) {
+    const el = document.getElementById(`step-${step.id}`);
+    if (el) {
+      el.classList.add('active');
+      await new Promise(r => setTimeout(r, delayMs));
+      el.classList.remove('active');
+      el.classList.add('done');
+    }
+  }
+}
+
+function resetPipeline() {
+  PIPELINE_STEPS.forEach(step => {
+    const el = document.getElementById(`step-${step.id}`);
+    if (el) el.className = 'pipeline-step';
+  });
+  document.getElementById('pipeline-container').classList.add('hidden');
+}
+
+// ── Init ──────────────────────────────────────────────────────
+(async () => {
+  const auth = await requireAuth();
+  if (!auth) return;
+
+  _producer = await getProducer(auth.user.id);
+  if (!_producer) { location.href = 'login.html'; return; }
+
+  await populateTopNav(_producer);
+
+  // Tier note
+  const tierNote = document.getElementById('tier-note');
+  if (_producer.tier === 'free') {
+    tierNote.textContent = 'Free tier: rule-based NLP. Upgrade to Pro for AI transforms.';
+    document.getElementById('ai-btn').disabled = true;
+    document.getElementById('ai-btn').title    = 'Pro or Studio tier required';
+  } else {
+    tierNote.textContent = `${_producer.tier.charAt(0).toUpperCase() + _producer.tier.slice(1)} plan — AI transforms enabled.`;
+  }
+
+  // Load artists into dropdown
+  const { data: artists } = await window.supabase
+    .from('artists')
+    .select('id, name, genre')
+    .eq('producer_id', _producer.id)
+    .order('name');
+
+  _artists = artists || [];
+  const artistSelect = document.getElementById('artist-select');
+  _artists.forEach(a => {
+    const opt = document.createElement('option');
+    opt.value = a.id;
+    opt.textContent = `${GENRES[a.genre]?.emoji || '🎵'} ${a.name}`;
+    artistSelect.appendChild(opt);
+  });
+
+  // Build genre grids
+  buildGenreGrid('source-genre-grid', null, key => { _sourceGenre = key; });
+  buildGenreGrid('target-genre-grid', null, key => { _targetGenre = key; });
+  buildPipeline();
+
+  // Check for existing session id in URL
+  const params = new URLSearchParams(location.search);
+  const sessionId = params.get('id');
+  if (sessionId) await loadSession(sessionId);
+
+  // Wire buttons
+  document.getElementById('free-btn').addEventListener('click', runFreeTransform);
+  document.getElementById('ai-btn').addEventListener('click', runAITransform);
+  document.getElementById('save-session-btn').addEventListener('click', saveSession);
+  document.getElementById('export-btn').addEventListener('click', exportBundle);
+})();
+
+// ── Load existing session ─────────────────────────────────────
+async function loadSession(id) {
+  const { data: s } = await window.supabase
+    .from('sessions')
+    .select('*, artists(name)')
+    .eq('id', id)
+    .eq('producer_id', _producer.id)
+    .maybeSingle();
+
+  if (!s) return;
+
+  document.getElementById('input-lyrics').value  = s.input_lyrics || '';
+  document.getElementById('session-notes').value = s.session_notes || '';
+  if (s.artist_id) document.getElementById('artist-select').value = s.artist_id;
+
+  _sourceGenre = s.source_genre;
+  _targetGenre = s.target_genre;
+
+  // Re-render genre grids with saved selections
+  buildGenreGrid('source-genre-grid', _sourceGenre, key => { _sourceGenre = key; });
+  buildGenreGrid('target-genre-grid', _targetGenre, key => { _targetGenre = key; });
+
+  if (s.output_lyrics) {
+    document.getElementById('output-lyrics').value = s.output_lyrics;
+    showOutputSection({ transformed: s.output_lyrics, changes: [], tier: s.tier_used });
+    _lastResult = { transformed: s.output_lyrics, changes: [], tier: s.tier_used };
+    _savedSessionId = s.id;
+  }
+}
+
+// ── Validate inputs ───────────────────────────────────────────
+function validateInputs() {
+  clearError('session-error');
+  const input = document.getElementById('input-lyrics').value.trim();
+  if (!input) { showError('session-error', 'Paste some lyrics first.'); return null; }
+  if (!_sourceGenre) { showError('session-error', 'Select a source genre.'); return null; }
+  if (!_targetGenre) { showError('session-error', 'Select a target genre.'); return null; }
+  if (_sourceGenre === _targetGenre) { showError('session-error', 'Source and target genre must be different.'); return null; }
+  return input;
+}
+
+// ── Get voice profile for selected artist ─────────────────────
+async function getVoiceProfile() {
+  const artistId = document.getElementById('artist-select').value;
+  if (!artistId) return null;
+  const { data: vp } = await window.supabase
+    .from('voice_profiles')
+    .select('sample_lyrics')
+    .eq('artist_id', artistId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return vp?.sample_lyrics || null;
+}
+
+// ── Free Transform ────────────────────────────────────────────
+async function runFreeTransform() {
+  const input = validateInputs();
+  if (!input) return;
+
+  const btn     = document.getElementById('free-btn');
+  const restore = withButtonLoading(btn, 'Transforming…');
+  resetPipeline();
+
+  const voiceProfile = await getVoiceProfile();
+
+  // Animate pipeline at ~200ms per step to give visual feedback
+  const animPromise = animatePipeline(220);
+
+  // Run NLP synchronously (it's fast) but let animation finish first
+  const result = transformLyrics(input, _sourceGenre, _targetGenre, voiceProfile);
+  await animPromise;
+
+  restore();
+
+  _lastResult = { ...result, tier: 'free', genreScore: null };
+  showOutputSection(_lastResult);
+}
+
+// ── AI Transform ──────────────────────────────────────────────
+async function runAITransform() {
+  const input = validateInputs();
+  if (!input) return;
+
+  if (_producer.tier === 'free') {
+    showError('session-error', 'AI transforms require Pro or Studio tier.');
+    return;
+  }
+
+  const btn     = document.getElementById('ai-btn');
+  const restore = withButtonLoading(btn, 'AI running…');
+  resetPipeline();
+
+  // Animate pipeline — slower for AI (API round-trip takes longer)
+  const animPromise = animatePipeline(800);
+
+  const { data: { session } } = await window.supabase.auth.getSession();
+  const voiceProfile = await getVoiceProfile();
+
+  try {
+    const res = await fetch('/api/transform', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({
+        inputLyrics:  input,
+        sourceGenre:  _sourceGenre,
+        targetGenre:  _targetGenre,
+        voiceProfile: voiceProfile || undefined
+      })
+    });
+
+    await animPromise;
+    restore();
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      showError('session-error', err.error || 'AI transform failed.');
+      return;
+    }
+
+    const data = await res.json();
+    _lastResult = { ...data, tier: 'ai' };
+    showOutputSection(_lastResult);
+
+  } catch (err) {
+    await animPromise;
+    restore();
+    showError('session-error', err.message || 'Network error.');
+  }
+}
+
+// ── Render output ─────────────────────────────────────────────
+function showOutputSection(result) {
+  document.getElementById('output-lyrics').value = result.transformed || '';
+  document.getElementById('output-section').classList.remove('hidden');
+
+  // Badge
+  const badge = document.getElementById('output-badge');
+  badge.innerHTML = result.tier === 'ai'
+    ? '<span class="badge badge-ai">AI</span>'
+    : '<span class="badge badge-free">Free NLP</span>';
+
+  // Genre score (AI only)
+  const scoreSection = document.getElementById('genre-score');
+  if (result.genreScore) {
+    document.getElementById('score-rhythm').textContent = result.genreScore.rhythm ?? '—';
+    document.getElementById('score-vocab').textContent  = result.genreScore.vocab  ?? '—';
+    document.getElementById('score-auth').textContent   = result.genreScore.authenticity ?? '—';
+    scoreSection.classList.remove('hidden');
+  } else {
+    scoreSection.classList.add('hidden');
+  }
+
+  // Changes log
+  const changesSection = document.getElementById('changes-section');
+  const changesList    = document.getElementById('changes-list');
+  if (result.changes && result.changes.length > 0) {
+    changesList.innerHTML = result.changes.map(c => `
+      <li class="change-item">
+        <span class="change-rule">${escapeHTML(c.rule)}</span>
+        <span class="change-detail">${escapeHTML(c.detail)}</span>
+      </li>`).join('');
+    changesSection.classList.remove('hidden');
+  } else {
+    changesSection.classList.add('hidden');
+  }
+
+  // Show bundle section for pro/studio
+  if (_producer.tier === 'pro' || _producer.tier === 'studio') {
+    document.getElementById('bundle-section').classList.remove('hidden');
+  }
+}
+
+// ── Save session ──────────────────────────────────────────────
+async function saveSession() {
+  if (!_lastResult) { showError('session-error', 'Run a transform first.'); return; }
+
+  const btn     = document.getElementById('save-session-btn');
+  const restore = withButtonLoading(btn, 'Saving…');
+
+  const artistId = document.getElementById('artist-select').value || null;
+  const notes    = document.getElementById('session-notes').value.trim();
+
+  // tier_used: map producers.tier → sessions.tier_used
+  // check constraint only allows 'free' | 'ai'
+  const tierUsed = tierUsedValue(_producer.tier);
+
+  const payload = {
+    producer_id:   _producer.id,
+    artist_id:     artistId || null,
+    input_lyrics:  document.getElementById('input-lyrics').value.trim(),
+    source_genre:  _sourceGenre,
+    target_genre:  _targetGenre,
+    output_lyrics: _lastResult.transformed,
+    session_notes: notes || null,
+    tier_used:     tierUsed
+  };
+
+  let error;
+  if (_savedSessionId) {
+    ({ error } = await window.supabase
+      .from('sessions')
+      .update(payload)
+      .eq('id', _savedSessionId)
+      .eq('producer_id', _producer.id));
+  } else {
+    const { data, error: insertErr } = await window.supabase
+      .from('sessions')
+      .insert(payload)
+      .select()
+      .single();
+    error = insertErr;
+    if (data) _savedSessionId = data.id;
+  }
+
+  restore();
+  if (error) { showError('session-error', error.message); return; }
+  showSuccess('session-success', 'Session saved.');
+}
+
+// ── Export bundle ─────────────────────────────────────────────
+async function exportBundle() {
+  if (!_lastResult) { showError('session-error', 'Run a transform first.'); return; }
+
+  const artistId = document.getElementById('artist-select').value;
+  const artist   = _artists.find(a => a.id === artistId);
+
+  await exportSessionBundle({
+    id:            _savedSessionId,
+    artists:       artist ? { name: artist.name } : null,
+    source_genre:  _sourceGenre,
+    target_genre:  _targetGenre,
+    tier_used:     tierUsedValue(_producer.tier),
+    created_at:    new Date().toISOString(),
+    input_lyrics:  document.getElementById('input-lyrics').value.trim(),
+    output_lyrics: _lastResult.transformed,
+    session_notes: document.getElementById('session-notes').value.trim()
+  });
+}
+
+function escapeHTML(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+</script>
+
+</body>
+</html>
