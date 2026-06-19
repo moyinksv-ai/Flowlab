@@ -3,7 +3,8 @@
 //   /api/* → Network First (never cache auth'd serverless responses)
 //   everything else → Cache First with network fallback
 
-const CACHE_NAME = 'flowlab-v2';
+// Bump version any time you deploy breaking changes to clear old caches.
+const CACHE_NAME = 'flowlab-v3';
 
 const PRECACHE_URLS = [
   '/',
@@ -22,24 +23,35 @@ const PRECACHE_URLS = [
   '/manifest.json',
   '/icon-192.png',
   '/icon-512.png',
-  // Pinned CDN libraries — unpkg sends CORS headers so these cache as
-  // normal (non-opaque) responses, not opaque responses.
-  'https://unpkg.com/compromise@14.14.0/builds/compromise.min.js',
-  'https://unpkg.com/jszip@3.10.1/dist/jszip.min.js',
-  'https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js'
+  // Pinned CDN libraries via jsDelivr (production-grade CDN, CORS enabled)
+  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.min.js',
+  'https://cdn.jsdelivr.net/npm/compromise@14.14.0/builds/compromise.min.js',
+  'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js'
 ];
 
 // ── Install: precache all static assets ──────────────────────
+// Each URL is cached individually so a single CDN blip does not
+// abort the entire install and leave users with a broken cache.
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(PRECACHE_URLS);
+    caches.open(CACHE_NAME).then(async (cache) => {
+      const results = await Promise.allSettled(
+        PRECACHE_URLS.map(url =>
+          fetch(url).then(res => {
+            if (res.ok) return cache.put(url, res);
+          }).catch(err => {
+            console.warn('[SW] Failed to precache:', url, err.message);
+          })
+        )
+      );
+      const failed = results.filter(r => r.status === 'rejected').length;
+      if (failed > 0) console.warn(`[SW] ${failed} precache entries failed — app may fall back to network.`);
     }).then(() => self.skipWaiting())
   );
 });
 
-// ── Activate: delete old caches ───────────────────────────────
+// ── Activate: delete ALL old caches ──────────────────────────
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
@@ -47,7 +59,10 @@ self.addEventListener('activate', (event) => {
       return Promise.all(
         keys
           .filter(key => key !== CACHE_NAME)
-          .map(key => caches.delete(key))
+          .map(key => {
+            console.log('[SW] Deleting old cache:', key);
+            return caches.delete(key);
+          })
       );
     }).then(() => self.clients.claim())
   );
@@ -73,7 +88,6 @@ async function networkFirst(request) {
     const response = await fetch(request);
     return response;
   } catch {
-    // API calls require connectivity by design — return a meaningful offline error
     return new Response(
       JSON.stringify({ error: 'Offline — AI transform requires an internet connection.' }),
       { status: 503, headers: { 'Content-Type': 'application/json' } }
@@ -87,14 +101,12 @@ async function cacheFirst(request) {
 
   try {
     const response = await fetch(request);
-    // Cache successful GET responses
     if (response.ok && request.method === 'GET') {
       const cache = await caches.open(CACHE_NAME);
       cache.put(request, response.clone());
     }
     return response;
   } catch {
-    // Fallback: serve root index for navigation requests (SPA-style)
     if (request.mode === 'navigate') {
       const fallback = await caches.match('/index.html');
       if (fallback) return fallback;
