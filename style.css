@@ -489,7 +489,7 @@ input[type="file"] {
 .session-layout {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-5);
   padding: var(--space-4);
 }
 
@@ -893,6 +893,97 @@ input[type="file"] {
   border-top: 1px solid var(--border-soft);
   font-size: 0.78rem;
   color: var(--text-muted);
+}
+
+/* --- STEP RAIL (session.html) --- */
+.step-rail {
+  display: flex;
+  align-items: center;
+  padding: var(--space-4) var(--space-4) 0;
+}
+
+.step-rail-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.step-rail-item .step-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  transition: all var(--transition);
+}
+
+.step-rail-item .step-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  transition: color var(--transition);
+}
+
+.step-rail-item.active .step-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.step-rail-item.active .step-label { color: var(--text-primary); }
+
+.step-rail-item.done .step-dot {
+  border-color: var(--success);
+  background: var(--success);
+  color: #fff;
+}
+
+.step-rail-item.done .step-dot::before { content: '✓'; }
+.step-rail-item.done .step-label { color: var(--text-secondary); }
+
+.step-rail-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+  margin: 0 var(--space-2);
+  transition: background var(--transition);
+}
+
+.step-rail-line.done { background: var(--success); }
+
+/* --- COLLAPSIBLE SETUP SUMMARY (session.html) --- */
+.setup-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.setup-summary span {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- REVEAL-IN ANIMATION --- */
+@keyframes revealIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.reveal-in { animation: revealIn 320ms ease both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal-in { animation: none; }
 }
 
 /* --- SCROLLBAR --- */
