@@ -309,19 +309,24 @@ async function runFreeTransform() {
   const restore = withButtonLoading(btn, 'Transforming…');
   resetPipeline();
 
-  const voiceProfile = await getVoiceProfile();
+  try {
+    const voiceProfile = await getVoiceProfile();
 
-  // Animate pipeline at ~200ms per step to give visual feedback
-  const animPromise = animatePipeline(220);
+    // Animate pipeline at ~200ms per step to give visual feedback
+    const animPromise = animatePipeline(220);
 
-  // Run NLP synchronously (it's fast) but let animation finish first
-  const result = transformLyrics(input, _sourceGenre, _targetGenre, voiceProfile);
-  await animPromise;
+    // Run NLP synchronously (it's fast) but let animation finish first
+    const result = transformLyrics(input, _sourceGenre, _targetGenre, voiceProfile);
+    await animPromise;
 
-  restore();
-
-  _lastResult = { ...result, tier: 'free', genreScore: null };
-  showOutputSection(_lastResult);
+    _lastResult = { ...result, tier: 'free', genreScore: null };
+    showOutputSection(_lastResult);
+  } catch (err) {
+    showError('session-error', 'Free transform failed. Please try again.');
+    console.error('runFreeTransform error:', err);
+  } finally {
+    restore();
+  }
 }
 
 // ── AI Transform ──────────────────────────────────────────────
