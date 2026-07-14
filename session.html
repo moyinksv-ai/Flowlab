@@ -25,34 +25,56 @@
 
   <div class="session-layout">
 
+    <!-- ── Step Rail ── -->
+    <div class="step-rail" id="step-rail">
+      <div class="step-rail-item active" data-step="setup">
+        <span class="step-dot">1</span><span class="step-label">Setup</span>
+      </div>
+      <div class="step-rail-line" data-line="1"></div>
+      <div class="step-rail-item" data-step="write">
+        <span class="step-dot">2</span><span class="step-label">Write</span>
+      </div>
+      <div class="step-rail-line" data-line="2"></div>
+      <div class="step-rail-item" data-step="transform">
+        <span class="step-dot">3</span><span class="step-label">Transform</span>
+      </div>
+    </div>
+
     <div id="session-error" class="inline-error" role="alert"></div>
     <div id="session-success" class="inline-success" role="status"></div>
 
     <!-- ── Artist + Genre Config ── -->
-    <div class="card">
+    <div class="card" id="setup-card">
       <div class="card-header"><span class="card-title">Session Setup</span></div>
 
-      <div class="form-group">
-        <label for="artist-select">Artist</label>
-        <select id="artist-select">
-          <option value="">No artist (quick session)</option>
-        </select>
+      <div id="setup-summary" class="setup-summary hidden">
+        <span id="setup-summary-text"></span>
+        <button type="button" class="btn btn-ghost btn-sm" id="setup-edit-btn">Edit</button>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3);">
-        <div>
+      <div id="setup-fields">
+        <div class="form-group">
+          <label for="artist-select">Artist</label>
+          <select id="artist-select">
+            <option value="">No artist (quick session)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
           <label class="panel-label">Source Genre</label>
           <div id="source-genre-grid"></div>
         </div>
-        <div>
+
+        <div id="target-genre-wrap" class="hidden">
           <label class="panel-label">Target Genre</label>
           <div id="target-genre-grid"></div>
         </div>
+        <p class="text-xs text-muted" id="target-genre-placeholder">Pick a source genre to unlock the target.</p>
       </div>
     </div>
 
     <!-- ── Input Panel ── -->
-    <div>
+    <div id="write-panel">
       <div class="panel-label">Input Lyrics</div>
       <textarea
         id="input-lyrics"
@@ -79,7 +101,7 @@
     </div>
 
     <!-- ── Output Panel ── -->
-    <div id="output-section" class="hidden">
+    <div id="output-section" class="hidden reveal-in">
       <div class="panel-label" style="display:flex;align-items:center;justify-content:space-between;">
         <span>Output Lyrics</span>
         <span id="output-badge"></span>
@@ -87,7 +109,7 @@
       <textarea id="output-lyrics" class="lyric-area" readonly rows="8" placeholder="Transformed lyrics appear here…"></textarea>
 
       <!-- Genre score (AI only) -->
-      <div id="genre-score" class="card hidden" style="margin-top:var(--space-3);">
+      <div id="genre-score" class="card hidden reveal-in" style="margin-top:var(--space-3);">
         <div class="card-header"><span class="card-title">Genre Score</span></div>
         <div class="score-grid">
           <div class="score-item">
@@ -106,14 +128,14 @@
       </div>
 
       <!-- Changes log -->
-      <div id="changes-section" class="card hidden" style="margin-top:var(--space-3);">
+      <div id="changes-section" class="card hidden reveal-in" style="margin-top:var(--space-3);">
         <div class="card-header"><span class="card-title">Transform Log</span></div>
         <ul id="changes-list" class="changes-list"></ul>
       </div>
     </div>
 
     <!-- ── Session Bundle (save + export, pro/studio only) ── -->
-    <div id="bundle-section" class="card hidden">
+    <div id="bundle-section" class="card hidden reveal-in">
       <div class="card-header"><span class="card-title">Session Bundle</span></div>
 
       <div class="form-group">
@@ -192,6 +214,52 @@ function resetPipeline() {
   document.getElementById('pipeline-container').classList.add('hidden');
 }
 
+// ── Step rail ─────────────────────────────────────────────────
+const FLOW_STEPS = ['setup', 'write', 'transform'];
+
+function setFlowStep(step) {
+  const idx = FLOW_STEPS.indexOf(step);
+  document.querySelectorAll('.step-rail-item').forEach((el, i) => {
+    el.classList.remove('active', 'done');
+    if (i < idx) el.classList.add('done');
+    else if (i === idx) el.classList.add('active');
+  });
+  document.querySelectorAll('.step-rail-line').forEach((el, i) => {
+    el.classList.toggle('done', i < idx);
+  });
+}
+
+function updateFlowStep() {
+  if (!_sourceGenre || !_targetGenre) { setFlowStep('setup'); return; }
+  const hasInput = document.getElementById('input-lyrics').value.trim().length > 0;
+  setFlowStep(hasInput ? 'transform' : 'write');
+}
+
+// ── Progressive genre reveal + collapsible setup summary ──────
+function revealTargetGenre() {
+  document.getElementById('target-genre-wrap').classList.remove('hidden');
+  document.getElementById('target-genre-placeholder').classList.add('hidden');
+}
+
+function maybeCollapseSetup() {
+  if (!_sourceGenre || !_targetGenre) return;
+  const src = GENRES[_sourceGenre];
+  const tgt = GENRES[_targetGenre];
+  if (!src || !tgt) return;
+  const artistId = document.getElementById('artist-select').value;
+  const artist = _artists.find(a => a.id === artistId);
+  document.getElementById('setup-summary-text').textContent =
+    `${src.emoji} ${src.label} → ${tgt.emoji} ${tgt.label} · ${artist ? artist.name : 'Quick session'}`;
+  document.getElementById('setup-fields').classList.add('hidden');
+  document.getElementById('setup-summary').classList.remove('hidden');
+}
+
+function expandSetup() {
+  document.getElementById('setup-fields').classList.remove('hidden');
+  document.getElementById('setup-summary').classList.add('hidden');
+  setFlowStep('setup');
+}
+
 // ── Init ──────────────────────────────────────────────────────
 (async () => {
   const auth = await requireAuth();
@@ -229,8 +297,16 @@ function resetPipeline() {
   });
 
   // Build genre grids
-  buildGenreGrid('source-genre-grid', null, key => { _sourceGenre = key; });
-  buildGenreGrid('target-genre-grid', null, key => { _targetGenre = key; });
+  buildGenreGrid('source-genre-grid', null, key => {
+    _sourceGenre = key;
+    revealTargetGenre();
+    updateFlowStep();
+  });
+  buildGenreGrid('target-genre-grid', null, key => {
+    _targetGenre = key;
+    maybeCollapseSetup();
+    updateFlowStep();
+  });
   buildPipeline();
 
   // Check for existing session id in URL
@@ -243,6 +319,8 @@ function resetPipeline() {
   document.getElementById('ai-btn').addEventListener('click', runAITransform);
   document.getElementById('save-session-btn').addEventListener('click', saveSession);
   document.getElementById('export-btn').addEventListener('click', exportBundle);
+  document.getElementById('setup-edit-btn').addEventListener('click', expandSetup);
+  document.getElementById('input-lyrics').addEventListener('input', updateFlowStep);
 })();
 
 // ── Load existing session ─────────────────────────────────────
@@ -264,8 +342,18 @@ async function loadSession(id) {
   _targetGenre = s.target_genre;
 
   // Re-render genre grids with saved selections
-  buildGenreGrid('source-genre-grid', _sourceGenre, key => { _sourceGenre = key; });
-  buildGenreGrid('target-genre-grid', _targetGenre, key => { _targetGenre = key; });
+  buildGenreGrid('source-genre-grid', _sourceGenre, key => {
+    _sourceGenre = key;
+    revealTargetGenre();
+    updateFlowStep();
+  });
+  buildGenreGrid('target-genre-grid', _targetGenre, key => {
+    _targetGenre = key;
+    maybeCollapseSetup();
+    updateFlowStep();
+  });
+  revealTargetGenre();
+  maybeCollapseSetup();
 
   if (s.output_lyrics) {
     document.getElementById('output-lyrics').value = s.output_lyrics;
@@ -273,6 +361,8 @@ async function loadSession(id) {
     _lastResult = { transformed: s.output_lyrics, changes: [], tier: s.tier_used };
     _savedSessionId = s.id;
   }
+
+  updateFlowStep();
 }
 
 // ── Validate inputs ───────────────────────────────────────────
