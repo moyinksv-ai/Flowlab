@@ -137,11 +137,21 @@ async function renderAvatar(containerEl, path, fallbackEmoji) {
    ============================================================ */
 
 function withButtonLoading(btn, label) {
+  // Guard against a second call firing while this button is already
+  // mid-request (e.g. Enter pressed twice) — without this, the second
+  // call would save the spinner markup itself as the "original" HTML,
+  // and the button would get stuck spinning forever once the first
+  // call's restore() re-applies that corrupted value.
+  if (btn.dataset.loading === 'true') {
+    return () => {};
+  }
+  btn.dataset.loading = 'true';
   btn.disabled = true;
-  btn._originalHTML = btn.innerHTML;
+  const originalHTML = btn.innerHTML;
   btn.innerHTML = `<span class="spinner"></span>${label ? ` ${label}` : ''}`;
   return () => {
+    btn.dataset.loading = 'false';
     btn.disabled = false;
-    btn.innerHTML = btn._originalHTML;
+    btn.innerHTML = originalHTML;
   };
 }
