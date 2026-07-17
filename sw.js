@@ -4,7 +4,7 @@
 //   everything else → Cache First with network fallback
 
 // Bump version any time you deploy breaking changes to clear old caches.
-const CACHE_NAME = 'flowlab-v3.11';
+const CACHE_NAME = 'flowlab-v3.1';
 
 const PRECACHE_URLS = [
   '/',
