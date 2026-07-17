@@ -85,13 +85,28 @@
 
     const restore = withButtonLoading(signupBtn, 'Creating account…');
 
-    const { data, error } = await window.supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { name } }
-    });
-
-    restore();
+    let data, error;
+    try {
+      ({ data, error } = await window.supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { name } }
+      }));
+    } catch (err) {
+      // signUp() can REJECT, not just resolve with {error} — auth-js's
+      // _saveSession() calls storage.setItem() with no try/catch of its
+      // own. If that throws (blocked storage, quota, private-mode
+      // restrictions, etc.) it isn't an AuthError, so signUp()'s internal
+      // catch block re-throws it instead of returning it. Without this
+      // try/catch, restore() below never runs and the button is stuck on
+      // "Creating account…" forever — which is the exact bug in the
+      // screenshot.
+      console.error('signUp() threw:', err);
+      showError('signup-error', `Unexpected error: ${err.message || err}`);
+      return;
+    } finally {
+      restore();
+    }
 
     // Branch on what signUp() actually returns — never assume which
     // Supabase Auth setting ("Confirm email" on/off) is active.

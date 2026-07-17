@@ -436,10 +436,14 @@ async function runAITransform() {
   // Animate pipeline — slower for AI (API round-trip takes longer)
   const animPromise = animatePipeline(800);
 
-  const { data: { session } } = await window.supabase.auth.getSession();
-  const voiceProfile = await getVoiceProfile();
-
   try {
+    // getSession() can throw a raw (non-AuthError) exception the same way
+    // signUp()/signInWithPassword() can (see auth.js) — it must be inside
+    // this try block, or a throw here would skip restore() below and
+    // leave the "AI running…" button stuck exactly like the signup bug.
+    const { data: { session } } = await window.supabase.auth.getSession();
+    const voiceProfile = await getVoiceProfile();
+
     const res = await fetch('/api/transform', {
       method: 'POST',
       headers: {

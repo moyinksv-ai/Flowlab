@@ -68,9 +68,20 @@
 
     const restore = withButtonLoading(loginBtn, 'Signing in…');
 
-    const { data, error } = await window.supabase.auth.signInWithPassword({ email, password });
-
-    restore();
+    let data, error;
+    try {
+      ({ data, error } = await window.supabase.auth.signInWithPassword({ email, password }));
+    } catch (err) {
+      // Same root cause as signup.html: signInWithPassword() also calls
+      // _saveSession() on success, which can throw a raw (non-AuthError)
+      // exception that auth-js re-throws instead of returning. Without
+      // this catch, restore() never runs and "Signing in…" hangs forever.
+      console.error('signInWithPassword() threw:', err);
+      showError('login-error', `Unexpected error: ${err.message || err}`);
+      return;
+    } finally {
+      restore();
+    }
 
     if (error) {
       // Surface Supabase's message directly — it already returns the correct

@@ -95,8 +95,15 @@
 <script>
   // Redirect to dashboard if already signed in
   (async () => {
-    const { data: { session } } = await window.supabase.auth.getSession();
-    if (session) location.href = 'dashboard.html';
+    try {
+      const { data: { session } } = await window.supabase.auth.getSession();
+      if (session) location.href = 'dashboard.html';
+    } catch (err) {
+      // Non-fatal: worst case the user just sees the landing page
+      // instead of being auto-redirected. Log it instead of leaving
+      // an unhandled promise rejection.
+      console.error('getSession() threw on landing page:', err);
+    }
   })();
 
   // Register service worker

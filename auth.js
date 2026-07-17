@@ -8,12 +8,20 @@
  * Call this at the top of every authenticated page's init function.
  */
 async function requireAuth() {
-  const { data: { session }, error } = await window.supabase.auth.getSession();
-  if (error || !session) {
+  try {
+    const { data: { session }, error } = await window.supabase.auth.getSession();
+    if (error || !session) {
+      location.href = 'login.html';
+      return null;
+    }
+    return { session, user: session.user };
+  } catch (err) {
+    // getSession() reads/writes storage internally; fail safe to login
+    // instead of leaving the page half-initialized on a thrown error.
+    console.error('getSession() threw:', err);
     location.href = 'login.html';
     return null;
   }
-  return { session, user: session.user };
 }
 
 /**
@@ -36,8 +44,17 @@ async function getProducer(userId) {
  * Signs the user out and redirects to login.html.
  */
 async function signOut() {
-  await window.supabase.auth.signOut();
-  location.href = 'login.html';
+  try {
+    await window.supabase.auth.signOut();
+  } catch (err) {
+    // Same class of bug as signup/login: signOut() internally calls
+    // _removeSession() -> storage.removeItem(), which is also unguarded
+    // in auth-js. A thrown error here must never trap the user on an
+    // authenticated page — log it and redirect anyway.
+    console.error('signOut() threw:', err);
+  } finally {
+    location.href = 'login.html';
+  }
 }
 
 /**
