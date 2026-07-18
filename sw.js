@@ -23,10 +23,11 @@ const PRECACHE_URLS = [
   '/manifest.json',
   '/icon-192.png',
   '/icon-512.png',
-  // Pinned CDN libraries via jsDelivr (production-grade CDN, CORS enabled)
-  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.min.js',
-  'https://cdn.jsdelivr.net/npm/compromise@14.14.0/builds/compromise.min.js',
-  'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js'
+  // Self-hosted libraries — no longer dependent on jsdelivr availability
+  '/supabase.umd.js',
+  '/26.supabase.js',
+  '/compromise.js',
+  '/jszip.min.js'
 ];
 
 // ── Install: precache all static assets ──────────────────────
