@@ -20,6 +20,7 @@
     <div class="nav-right">
       <span id="nav-producer-tier"></span>
       <span id="nav-producer-name" class="producer-name"></span>
+      <button class="btn btn-ghost btn-sm" data-logout>Sign out</button>
     </div>
   </nav>
 
@@ -68,6 +69,12 @@
         <label for="sample-lyrics">Sample Lyrics</label>
         <textarea id="sample-lyrics" placeholder="Paste 1–3 verses of their most representative lyrics…" rows="6"></textarea>
       </div>
+      <button type="button" id="analyze-voice-btn" class="btn btn-secondary">🔍 Analyze Voice</button>
+      <div id="voice-fingerprint" class="card hidden" style="margin-top:var(--space-3);background:var(--bg-elevated);">
+        <div class="card-header"><span class="card-title">Voice Fingerprint</span></div>
+        <div id="fingerprint-stats" class="text-sm text-secondary"></div>
+        <div id="fingerprint-themes" class="text-sm" style="margin-top:var(--space-2);"></div>
+      </div>
     </div>
 
     <!-- ── Actions ── -->
@@ -76,18 +83,213 @@
       <button id="delete-btn" class="btn btn-danger hidden">Delete</button>
     </div>
 
+    <div class="bottom-nav-spacer"></div>
   </div>
+
+  <nav class="bottom-nav">
+    <a href="dashboard.html" class="bottom-nav-item active"><span class="bn-icon">🏠</span>Home</a>
+    <a href="session.html" class="bottom-nav-item"><span class="bn-icon">✍️</span>Write</a>
+    <a href="beats.html" class="bottom-nav-item"><span class="bn-icon">🎵</span>Beats</a>
+    <a href="ideas.html" class="bottom-nav-item"><span class="bn-icon">💡</span>Ideas</a>
+  </nav>
 </div>
 
 <script src="supabase.umd.js"></script>
+<script src="compromise.js"></script>
 <script src="genres.js"></script>
 <script src="supabase.js"></script>
 <script src="auth.js"></script>
 <script src="app.js"></script>
+<script src="nlp.js"></script>
 <script>
 let _producer  = null;
 let _artistId  = null; // set in EDIT mode
 let _isEdit    = false;
+let _fingerprint = null; // extracted_patterns — computed stats + AI theme read
+
+// Simple stopword list for word-frequency — excludes function words so
+// the top words that surface are actually distinctive, not "the/and/a".
+const STOPWORDS = new Set([
+  'the','a','an','and','or','but','of','in','on','at','to','for','with',
+  'is','are','was','were','be','been','being','i','you','he','she','it',
+  'we','they','my','your','his','her','its','our','their','this','that',
+  'these','those','not','no','so','just','from','as','it\'s','im','ill'
+]);
+
+function countLineSyllables(line) {
+  const words = line.trim().split(/\s+/).filter(Boolean);
+  return words.reduce((sum, w) => sum + countSyllables(w), 0);
+}
+
+// Real, deterministic stats — no AI involved in this part. Uses the same
+// countSyllables/rhymeSuffix/lastWord heuristics nlp.js already ships.
+function computeVoiceStats(sampleLyrics) {
+  const lines = sampleLyrics.split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length === 0) return null;
+
+  const syllableCounts = lines.map(countLineSyllables);
+  const avg = syllableCounts.reduce((a, b) => a + b, 0) / syllableCounts.length;
+
+  // Rhyme endings — group last words of each line by rhymeSuffix, count frequency
+  const endingCounts = {};
+  lines.forEach(line => {
+    const suffix = rhymeSuffix(lastWord(line));
+    if (!suffix) return;
+    endingCounts[suffix] = (endingCounts[suffix] || 0) + 1;
+  });
+  const commonRhymeEndings = Object.entries(endingCounts)
+    .filter(([, count]) => count > 1)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([ending, count]) => ({ ending, count }));
+
+  // Word frequency — excludes stopwords so results are distinctive
+  const wordCounts = {};
+  lines.join(' ').toLowerCase().match(/[a-z']+/g)?.forEach(w => {
+    if (STOPWORDS.has(w) || w.length < 3) return;
+    wordCounts[w] = (wordCounts[w] || 0) + 1;
+  });
+  const topWords = Object.entries(wordCounts)
+    .filter(([, count]) => count > 1)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([word, count]) => ({ word, count }));
+
+  return {
+    lineCount: lines.length,
+    avgSyllablesPerLine: Math.round(avg * 10) / 10,
+    minSyllablesPerLine: Math.min(...syllableCounts),
+    maxSyllablesPerLine: Math.max(...syllableCounts),
+    commonRhymeEndings,
+    topWords,
+    computedAt: new Date().toISOString()
+  };
+}
+
+function renderFingerprint(fp) {
+  const box = document.getElementById('voice-fingerprint');
+  if (!fp) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+
+  const statsEl = document.getElementById('fingerprint-stats');
+  const rhymeStr = fp.commonRhymeEndings?.length
+    ? fp.commonRhymeEndings.map(r => `"-${r.ending}" (×${r.count})`).join(', ')
+    : 'none recurring enough to flag';
+  const wordsStr = fp.topWords?.length
+    ? fp.topWords.map(w => `${w.word} (×${w.count})`).join(', ')
+    : 'none recurring enough to flag';
+
+  statsEl.innerHTML =
+    `<strong>${fp.lineCount} lines analyzed</strong> · avg ${fp.avgSyllablesPerLine} syll/line ` +
+    `(range ${fp.minSyllablesPerLine}–${fp.maxSyllablesPerLine})<br>` +
+    `Recurring rhyme endings: ${escapeHTML(rhymeStr)}<br>` +
+    `Recurring words: ${escapeHTML(wordsStr)}`;
+
+  const themesEl = document.getElementById('fingerprint-themes');
+  themesEl.textContent = fp.aiThemes
+    ? `Themes/register (AI read, not exact): ${fp.aiThemes}`
+    : '';
+}
+
+function escapeHTML(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// Client-side check only — improves UX and blocks accidental misuse, but
+// this is NOT the real security boundary. A malicious user can bypass
+// this function entirely and call the Supabase storage API directly.
+// The actual enforcement has to be the 'stems' bucket's own file-size
+// limit and allowed-MIME-types setting in the Supabase dashboard.
+const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const MAX_AVATAR_BYTES = 5 * 1024 * 1024; // 5MB, checked BEFORE compression
+
+function validateAvatarFile(file) {
+  if (!ALLOWED_AVATAR_TYPES.includes(file.type)) {
+    throw new Error('Avatar must be a JPG, PNG, or WEBP image.');
+  }
+  if (file.size > MAX_AVATAR_BYTES) {
+    throw new Error('Avatar must be under 5MB.');
+  }
+}
+
+// Resizes to a max 512px edge and re-encodes as JPEG at 0.8 quality.
+// A phone photo straight off a camera can be 4-8MB; avatars are only
+// ever displayed at 32-64px (avatar-sm/avatar-lg in style.css), so
+// storing the original resolution is pure waste — this typically cuts
+// file size by 90%+ with no visible quality loss at display size.
+function compressAvatar(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const maxEdge = 512;
+      const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width  = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(
+        blob => blob ? resolve(blob) : reject(new Error('Image compression failed.')),
+        'image/jpeg',
+        0.8
+      );
+    };
+    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('Could not read image file.')); };
+    img.src = objectUrl;
+  });
+}
+
+async function analyzeVoice() {
+  clearError('artist-error');
+  const sampleLyrics = document.getElementById('sample-lyrics').value.trim();
+  if (!sampleLyrics) { showError('artist-error', 'Paste sample lyrics first.'); return; }
+
+  if (_producer.tier === 'free') {
+    showError('artist-error', 'Voice analysis requires Pro or Studio tier.');
+    return;
+  }
+
+  const btn     = document.getElementById('analyze-voice-btn');
+  const restore = withButtonLoading(btn, 'Analyzing…');
+
+  try {
+    // Real stats computed client-side first — sent as ground truth,
+    // the AI is only asked for the qualitative part it can actually judge.
+    const stats = computeVoiceStats(sampleLyrics);
+
+    const { data: { session } } = await window.supabase.auth.getSession();
+    const res = await fetch('/api/analyze-voice', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({ sampleLyrics, stats })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      showError('artist-error', err.error || 'Voice analysis failed.');
+      restore();
+      return;
+    }
+
+    const data = await res.json();
+    _fingerprint = { ...stats, aiThemes: data.themes || null, notablePhrases: data.notablePhrases || [] };
+    renderFingerprint(_fingerprint);
+
+  } catch (err) {
+    showError('artist-error', err.message || 'Network error.');
+  } finally {
+    restore();
+  }
+}
 
 (async () => {
   // ── Auth guard ───────────────────────────────────────────
@@ -98,6 +300,11 @@ let _isEdit    = false;
   if (!_producer) { location.href = 'login.html'; return; }
 
   await populateTopNav(_producer);
+
+  if (_producer.tier === 'free') {
+    document.getElementById('analyze-voice-btn').disabled = true;
+    document.getElementById('analyze-voice-btn').title    = 'Pro or Studio tier required — theme analysis needs generation, not substitution';
+  }
 
   // ── Populate genre dropdown ──────────────────────────────
   const genreSelect = document.getElementById('artist-genre');
@@ -132,6 +339,10 @@ let _isEdit    = false;
   // ── Wire buttons ─────────────────────────────────────────
   document.getElementById('save-btn').addEventListener('click', handleSave);
   document.getElementById('delete-btn').addEventListener('click', handleDelete);
+  document.getElementById('analyze-voice-btn').addEventListener('click', analyzeVoice);
+  document.getElementById('sample-lyrics').addEventListener('input', () => {
+    if (_fingerprint) { _fingerprint = null; renderFingerprint(null); }
+  });
 })();
 
 async function loadArtist(artistId) {
@@ -169,6 +380,10 @@ async function loadArtist(artistId) {
 
   if (vp) {
     document.getElementById('sample-lyrics').value = vp.sample_lyrics || '';
+    if (vp.extracted_patterns) {
+      _fingerprint = vp.extracted_patterns;
+      renderFingerprint(_fingerprint);
+    }
   }
 }
 
@@ -192,6 +407,8 @@ async function handleSave() {
     } else {
       await addArtist(name, genre, avatarFile, sampleLyrics);
     }
+    showSuccess('artist-success', _isEdit ? 'Saved.' : 'Artist added.');
+    setTimeout(() => { location.href = 'dashboard.html'; }, 700);
   } catch (err) {
     showError('artist-error', err.message || 'Something went wrong.');
     restore();
@@ -212,11 +429,12 @@ async function addArtist(name, genre, avatarFile, sampleLyrics) {
 
   // Step 2: Upload avatar (if provided) — path requires the artist id
   if (avatarFile) {
-    const ext  = avatarFile.name.split('.').pop().toLowerCase();
-    const path = `${_producer.id}/${artistId}/avatar.${ext}`;
+    validateAvatarFile(avatarFile); // throws if invalid — caught by caller's try/catch
+    const compressed = await compressAvatar(avatarFile);
+    const path = `${_producer.id}/${artistId}/avatar.jpg`;
     const { error: uploadErr } = await window.supabase.storage
       .from('stems')
-      .upload(path, avatarFile, { upsert: true });
+      .upload(path, compressed, { upsert: true, contentType: 'image/jpeg' });
 
     if (!uploadErr) {
       // Update artist row with the storage path
@@ -231,7 +449,7 @@ async function addArtist(name, genre, avatarFile, sampleLyrics) {
   if (sampleLyrics) {
     const { error: vpErr } = await window.supabase
       .from('voice_profiles')
-      .insert({ artist_id: artistId, sample_lyrics: sampleLyrics });
+      .insert({ artist_id: artistId, sample_lyrics: sampleLyrics, extracted_patterns: _fingerprint || null });
     if (vpErr) console.warn('Voice profile insert failed:', vpErr.message);
   }
 
@@ -243,11 +461,12 @@ async function updateArtist(name, genre, avatarFile, sampleLyrics) {
 
   // Upload new avatar if provided
   if (avatarFile) {
-    const ext  = avatarFile.name.split('.').pop().toLowerCase();
-    const path = `${_producer.id}/${_artistId}/avatar.${ext}`;
+    validateAvatarFile(avatarFile); // throws if invalid — caught by caller's try/catch
+    const compressed = await compressAvatar(avatarFile);
+    const path = `${_producer.id}/${_artistId}/avatar.jpg`;
     const { error: uploadErr } = await window.supabase.storage
       .from('stems')
-      .upload(path, avatarFile, { upsert: true });
+      .upload(path, compressed, { upsert: true, contentType: 'image/jpeg' });
 
     if (!uploadErr) updates.avatar_path = path;
   }
@@ -274,12 +493,12 @@ async function updateArtist(name, genre, avatarFile, sampleLyrics) {
     if (existing) {
       await window.supabase
         .from('voice_profiles')
-        .update({ sample_lyrics: sampleLyrics })
+        .update({ sample_lyrics: sampleLyrics, extracted_patterns: _fingerprint || null })
         .eq('id', existing.id);
     } else {
       await window.supabase
         .from('voice_profiles')
-        .insert({ artist_id: _artistId, sample_lyrics: sampleLyrics });
+        .insert({ artist_id: _artistId, sample_lyrics: sampleLyrics, extracted_patterns: _fingerprint || null });
     }
   }
 

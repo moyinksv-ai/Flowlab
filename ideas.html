@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FlowLab — Idea Bank</title>
+  <meta name="theme-color" content="#0A0812">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="page">
+
+  <!-- ── Top Nav ── -->
+  <nav class="top-nav">
+    <a href="dashboard.html" style="text-decoration:none;"><span class="logo">Flow<span>Lab</span></span></a>
+    <div class="nav-right">
+      <span id="nav-producer-tier"></span>
+      <span id="nav-producer-name" class="producer-name"></span>
+      <button class="btn btn-ghost btn-sm" data-logout>Sign out</button>
+    </div>
+  </nav>
+
+  <div class="container" style="padding-top:var(--space-5);padding-bottom:var(--space-10);">
+
+    <div class="section-header">
+      <span class="section-title">Idea Bank</span>
+      <a href="session.html" class="btn btn-sm btn-primary">New Session</a>
+    </div>
+    <p class="text-xs text-muted" style="margin-bottom:var(--space-4);">
+      Every session you've saved, searchable. No AI here — this is your own catalog.
+    </p>
+
+    <!-- ── Filters ── -->
+    <div class="card" style="margin-bottom:var(--space-4);">
+      <div class="form-group">
+        <label for="search-input">Search lyrics</label>
+        <input type="text" id="search-input" placeholder="Search words or phrases…">
+      </div>
+      <div style="display:flex;gap:var(--space-3);flex-wrap:wrap;">
+        <div class="form-group" style="flex:1;min-width:120px;">
+          <label for="artist-filter">Artist</label>
+          <select id="artist-filter"><option value="">All artists</option></select>
+        </div>
+        <div class="form-group" style="flex:1;min-width:120px;">
+          <label for="genre-filter">Genre</label>
+          <select id="genre-filter"><option value="">All genres</option></select>
+        </div>
+        <div class="form-group" style="flex:1;min-width:120px;">
+          <label for="type-filter">Type</label>
+          <select id="type-filter">
+            <option value="">All types</option>
+            <option value="transform">Transform</option>
+            <option value="complete">Complete</option>
+            <option value="rhythm">Rhythm Fit</option>
+          </select>
+        </div>
+      </div>
+      <div id="tag-filter-row" style="display:flex;flex-wrap:wrap;gap:var(--space-2);margin-top:var(--space-2);"></div>
+    </div>
+
+    <!-- ── Results ── -->
+    <div id="results-container">
+      <div class="empty-state" id="results-loading">
+        <span class="spinner spinner-lg"></span>
+      </div>
+    </div>
+
+    <div class="bottom-nav-spacer"></div>
+  </div>
+
+  <nav class="bottom-nav">
+    <a href="dashboard.html" class="bottom-nav-item"><span class="bn-icon">🏠</span>Home</a>
+    <a href="session.html" class="bottom-nav-item"><span class="bn-icon">✍️</span>Write</a>
+    <a href="beats.html" class="bottom-nav-item"><span class="bn-icon">🎵</span>Beats</a>
+    <a href="ideas.html" class="bottom-nav-item active"><span class="bn-icon">💡</span>Ideas</a>
+  </nav>
+</div>
+
+<script src="supabase.umd.js"></script>
+<script src="genres.js"></script>
+<script src="supabase.js"></script>
+<script src="auth.js"></script>
+<script src="app.js"></script>
+<script>
+let _allSessions = [];
+let _activeTags  = new Set();
+
+(async () => {
+  // ── Auth guard ────────────────────────────────────────────
+  const auth = await requireAuth();
+  if (!auth) return;
+
+  const producer = await getProducer(auth.user.id);
+  if (!producer) { location.href = 'login.html'; return; }
+
+  await populateTopNav(producer);
+
+  // ── Fetch artists for the filter dropdown ──────────────────
+  const { data: artists } = await window.supabase
+    .from('artists')
+    .select('id, name')
+    .eq('producer_id', producer.id)
+    .order('name');
+
+  const artistFilter = document.getElementById('artist-filter');
+  (artists || []).forEach(a => {
+    const opt = document.createElement('option');
+    opt.value = a.id;
+    opt.textContent = a.name;
+    artistFilter.appendChild(opt);
+  });
+
+  // ── Populate genre filter from genres.js — not invented options ──
+  const genreFilter = document.getElementById('genre-filter');
+  Object.entries(GENRES).forEach(([key, g]) => {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = `${g.emoji || ''} ${g.label}`.trim();
+    genreFilter.appendChild(opt);
+  });
+
+  // ── Fetch every session for this producer, joined with artist name ──
+  // Note: fetches the full catalog client-side. Fine at the scale a
+  // single producer's session history reaches; if this becomes slow at
+  // scale, move filtering server-side (Supabase .ilike()/.contains()).
+  const { data: sessions, error } = await window.supabase
+    .from('sessions')
+    .select('*, artists(name)')
+    .eq('producer_id', producer.id)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    document.getElementById('results-container').innerHTML =
+      `<div class="empty-state"><p>Couldn't load your idea bank: ${escapeHTML(error.message)}</p></div>`;
+    return;
+  }
+
+  _allSessions = sessions || [];
+  buildTagFilterChips(_allSessions);
+  renderResults();
+
+  document.getElementById('search-input').addEventListener('input', renderResults);
+  document.getElementById('artist-filter').addEventListener('change', renderResults);
+  document.getElementById('genre-filter').addEventListener('change', renderResults);
+  document.getElementById('type-filter').addEventListener('change', renderResults);
+})();
+
+// Every distinct tag across the whole catalog becomes a toggle chip —
+// not a fixed vocabulary, since tags are free-form and user-defined.
+function buildTagFilterChips(sessions) {
+  const allTags = new Set();
+  sessions.forEach(s => (s.tags || []).forEach(t => allTags.add(t)));
+
+  const row = document.getElementById('tag-filter-row');
+  if (allTags.size === 0) return;
+
+  [...allTags].sort().forEach(tag => {
+    const chip = document.createElement('span');
+    chip.className = 'tag';
+    chip.style.cursor = 'pointer';
+    chip.textContent = tag;
+    chip.addEventListener('click', () => {
+      if (_activeTags.has(tag)) { _activeTags.delete(tag); chip.style.opacity = ''; chip.style.borderColor = ''; }
+      else { _activeTags.add(tag); chip.style.opacity = '1'; chip.style.border = '1px solid var(--accent)'; }
+      renderResults();
+    });
+    row.appendChild(chip);
+  });
+}
+
+function renderResults() {
+  const searchTerm  = document.getElementById('search-input').value.trim().toLowerCase();
+  const artistId    = document.getElementById('artist-filter').value;
+  const genreFilter = document.getElementById('genre-filter').value;
+  const typeFilter  = document.getElementById('type-filter').value;
+
+  const filtered = _allSessions.filter(s => {
+    if (artistId && s.artist_id !== artistId) return false;
+    if (genreFilter && s.source_genre !== genreFilter && s.target_genre !== genreFilter) return false;
+    if (typeFilter && (s.session_type || 'transform') !== typeFilter) return false;
+    if (_activeTags.size > 0) {
+      const sessionTags = new Set(s.tags || []);
+      for (const t of _activeTags) if (!sessionTags.has(t)) return false;
+    }
+    if (searchTerm) {
+      const haystack = `${s.input_lyrics || ''} ${s.output_lyrics || ''}`.toLowerCase();
+      if (!haystack.includes(searchTerm)) return false;
+    }
+    return true;
+  });
+
+  const container = document.getElementById('results-container');
+  container.innerHTML = '';
+
+  if (filtered.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">🔍</div>
+        <h3>No matching sessions</h3>
+        <p>${_allSessions.length === 0 ? 'Save your first session to start building your idea bank.' : 'Try clearing a filter or search term.'}</p>
+      </div>`;
+    return;
+  }
+
+  filtered.forEach(s => {
+    const row = document.createElement('a');
+    row.className = 'session-row';
+    row.href = `session.html?id=${s.id}`;
+    row.style.marginBottom = 'var(--space-2)';
+    row.style.flexDirection = 'column';
+    row.style.alignItems = 'stretch';
+
+    const srcG = GENRES[s.source_genre];
+    const tgtG = GENRES[s.target_genre];
+    const genreLine = tgtG
+      ? `<span>${srcG?.emoji || ''} ${srcG?.label || s.source_genre || ''}</span><span class="arrow">→</span><span>${tgtG.emoji || ''} ${tgtG.label}</span>`
+      : (srcG ? `<span>${srcG.emoji || ''} ${srcG.label}</span>` : '');
+
+    const typeLabel = { transform: 'Transform', complete: 'Complete', rhythm: 'Rhythm Fit' }[s.session_type] || 'Transform';
+    const tagsHTML = (s.tags || []).map(t => `<span class="tag">${escapeHTML(t)}</span>`).join(' ');
+
+    row.innerHTML = `
+      <div style="display:flex;justify-content:space-between;gap:var(--space-3);">
+        <div class="session-info">
+          <div class="session-title">${escapeHTML(s.artists?.name || 'No artist')} — ${escapeHTML((s.input_lyrics || '').slice(0, 60))}…</div>
+          <div class="session-genres">${genreLine}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;">
+          <div class="text-xs text-muted">${formatRelativeTime(s.created_at)}</div>
+          <span class="badge badge-ai" style="margin-top:4px;">${typeLabel}</span>
+        </div>
+      </div>
+      ${tagsHTML ? `<div style="margin-top:var(--space-2);">${tagsHTML}</div>` : ''}
+    `;
+    container.appendChild(row);
+  });
+}
+
+function escapeHTML(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+</script>
+
+</body>
+</html>

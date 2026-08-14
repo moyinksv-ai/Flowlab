@@ -8,6 +8,11 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/icon-192.png">
   <link rel="stylesheet" href="style.css">
+  <style>
+    .beat-grid-row { padding:var(--space-2) var(--space-3); border-radius:6px; cursor:pointer; transition:background 0.15s; }
+    .beat-grid-row:hover { background: var(--bg-elevated); }
+    .beat-grid-row.active-group { background: rgba(91,108,249,0.15); border-left:3px solid #5b6cf9; }
+  </style>
 </head>
 <body>
 
@@ -20,6 +25,7 @@
     <div class="nav-right">
       <span id="nav-producer-tier"></span>
       <span id="nav-producer-name" class="producer-name"></span>
+      <button class="btn btn-ghost btn-sm" data-logout>Sign out</button>
     </div>
   </nav>
 
@@ -61,6 +67,13 @@
         </div>
 
         <div class="form-group">
+          <label for="beat-select">Beat (optional)</label>
+          <select id="beat-select">
+            <option value="">No beat</option>
+          </select>
+        </div>
+
+        <div class="form-group">
           <label class="panel-label">Source Genre</label>
           <div id="source-genre-grid"></div>
         </div>
@@ -82,12 +95,54 @@
         placeholder="Paste or type your lyrics here…"
         rows="8"
       ></textarea>
+      <div id="syllable-readout" class="text-xs text-muted" style="margin-top:var(--space-2);"></div>
+    </div>
+
+    <!-- ── Rhythm Fit Panel ── -->
+    <div class="card" id="rhythm-card">
+      <div class="card-header"><span class="card-title">Rhythm Fit</span></div>
+      <p class="text-xs text-muted">
+        No audio analysis here — type in the BPM you already know from your DAW.
+        Syllable counts below are computed for real from your actual lines
+        (same heuristic as Free Transform), not guessed.
+      </p>
+      <div style="display:flex;gap:var(--space-3);">
+        <div class="form-group" style="flex:1;">
+          <label for="bpm-input">BPM</label>
+          <input type="number" id="bpm-input" placeholder="e.g. 96" min="1" max="300">
+        </div>
+        <div class="form-group" style="flex:1;">
+          <label for="target-syllables-input">Target syllables / line</label>
+          <input type="number" id="target-syllables-input" placeholder="auto from genre" min="1" max="40">
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Beat Grid — appears only when a beat is selected ── -->
+    <div class="card hidden" id="beat-grid-card">
+      <div class="card-header"><span class="card-title">Beat Grid</span></div>
+      <p class="text-xs text-muted">
+        Assumes 4/4 time. Each group's duration is exact math from the beat's BPM —
+        the syllable target is still the genre estimate, not a claim about your flow.
+      </p>
+      <div style="display:flex;gap:var(--space-3);align-items:flex-end;margin-bottom:var(--space-2);">
+        <div class="form-group" style="flex:1;margin-bottom:0;">
+          <label for="bars-per-line">Bars per line</label>
+          <input type="number" id="bars-per-line" value="2" min="1" max="8">
+        </div>
+        <button id="beat-play-btn" class="btn btn-secondary btn-sm">▶ Play</button>
+      </div>
+      <div id="beat-grid-waveform"></div>
+      <div id="beat-grid-list" style="margin-top:var(--space-3);"></div>
     </div>
 
     <!-- ── Transform Controls ── -->
     <div class="transform-controls">
       <div id="pipeline-container" class="pipeline hidden"></div>
 
+      <div class="text-xs text-muted" style="margin-bottom:var(--space-2);font-weight:600;">
+        TRANSFORM BETWEEN GENRES <span style="font-weight:400;">— needs both genres picked above</span>
+      </div>
       <div class="transform-btn-row" id="transform-btns">
         <button id="free-btn" class="btn btn-secondary">
           🆓 Free Transform
@@ -95,6 +150,37 @@
         <button id="ai-btn" class="btn btn-primary">
           🤖 AI Transform
         </button>
+      </div>
+
+      <div class="text-xs text-muted" style="margin:var(--space-4) 0 var(--space-2);font-weight:600;">
+        REFINE THIS DRAFT <span style="font-weight:400;">— works without picking a genre</span>
+      </div>
+      <div class="transform-btn-row">
+        <button id="complete-btn" class="btn btn-primary">
+          ✍️ Complete Draft
+        </button>
+        <button id="rhythm-btn" class="btn btn-primary">
+          🎯 Fit to Rhythm
+        </button>
+      </div>
+      <p class="text-xs text-muted" style="text-align:center;">
+        Complete Draft fills gaps and finishes unfinished lines without touching what
+        you've already written. Fit to Rhythm rewrites lines to hit a syllable target —
+        set one below, or pick a source genre for a default.
+      </p>
+      <div class="transform-btn-row" style="margin-top:var(--space-2);grid-template-columns:1fr;">
+        <button id="repetition-btn" class="btn btn-secondary">
+          🔁 Check Repetition
+        </button>
+      </div>
+      <p class="text-xs text-muted" style="text-align:center;">
+        Repetition Check compares this draft against past sessions for the selected
+        artist — no AI call, works on every tier. Pick an artist above to use it.
+      </p>
+      <div id="repetition-results" class="card hidden" style="margin-top:var(--space-2);background:var(--bg-elevated);">
+        <div class="card-header"><span class="card-title">Repetition Check</span></div>
+        <div id="repetition-summary" class="text-sm text-secondary"></div>
+        <ul id="repetition-list" class="text-sm" style="margin-top:var(--space-2);padding-left:var(--space-4);"></ul>
       </div>
 
       <p class="text-xs text-muted" style="text-align:center;" id="tier-note"></p>
@@ -143,13 +229,30 @@
         <textarea id="session-notes" rows="3" placeholder="Optional notes, references, direction…"></textarea>
       </div>
 
+      <div class="form-group">
+        <label for="tag-input">Tags</label>
+        <div style="display:flex;gap:var(--space-2);">
+          <input type="text" id="tag-input" placeholder="Type a tag, press Enter" style="flex:1;">
+          <button type="button" id="suggest-tags-btn" class="btn btn-secondary btn-sm">✨ Suggest</button>
+        </div>
+        <div id="tag-list" style="display:flex;flex-wrap:wrap;gap:var(--space-2);margin-top:var(--space-2);"></div>
+      </div>
+
       <div style="display:flex;gap:var(--space-3);">
         <button id="save-session-btn" class="btn btn-secondary" style="flex:1;">Save Session</button>
         <button id="export-btn" class="btn btn-primary" style="flex:1;">⬇ Export ZIP</button>
       </div>
     </div>
 
+    <div class="bottom-nav-spacer"></div>
   </div>
+
+  <nav class="bottom-nav">
+    <a href="dashboard.html" class="bottom-nav-item"><span class="bn-icon">🏠</span>Home</a>
+    <a href="session.html" class="bottom-nav-item active"><span class="bn-icon">✍️</span>Write</a>
+    <a href="beats.html" class="bottom-nav-item"><span class="bn-icon">🎵</span>Beats</a>
+    <a href="ideas.html" class="bottom-nav-item"><span class="bn-icon">💡</span>Ideas</a>
+  </nav>
 </div>
 
 <script src="supabase.umd.js"></script>
@@ -168,6 +271,8 @@ let _sourceGenre = null;
 let _targetGenre = null;
 let _lastResult  = null; // { transformed, changes, genreScore?, tier }
 let _savedSessionId = null;
+let _sessionType = 'transform'; // 'transform' | 'complete' — matches sessions.session_type check constraint
+let _tags = []; // user-controlled tags — AI can suggest, never auto-applies
 
 // ── Pipeline steps ────────────────────────────────────────────
 const PIPELINE_STEPS = [
@@ -273,9 +378,13 @@ function expandSetup() {
   // Tier note
   const tierNote = document.getElementById('tier-note');
   if (_producer.tier === 'free') {
-    tierNote.textContent = 'Free tier: rule-based NLP. Upgrade to Pro for AI transforms.';
+    tierNote.textContent = 'Free tier: rule-based NLP. Upgrade to Pro for AI transforms and Complete Draft.';
     document.getElementById('ai-btn').disabled = true;
     document.getElementById('ai-btn').title    = 'Pro or Studio tier required';
+    document.getElementById('complete-btn').disabled = true;
+    document.getElementById('complete-btn').title    = 'Pro or Studio tier required — completion generates new lines, the free NLP engine can only substitute words in existing ones';
+    document.getElementById('rhythm-btn').disabled = true;
+    document.getElementById('rhythm-btn').title    = 'Pro or Studio tier required — rewriting lines to hit a syllable target needs generation, not substitution';
   } else {
     tierNote.textContent = `${_producer.tier.charAt(0).toUpperCase() + _producer.tier.slice(1)} plan — AI transforms enabled.`;
   }
@@ -296,11 +405,41 @@ function expandSetup() {
     artistSelect.appendChild(opt);
   });
 
+  // Beats — feeds real detected BPM straight into Rhythm Fit instead of
+  // requiring it typed in again.
+  const { data: beats } = await window.supabase
+    .from('beats')
+    .select('id, name, bpm')
+    .eq('producer_id', _producer.id)
+    .order('created_at', { ascending: false });
+
+  const beatSelect = document.getElementById('beat-select');
+  (beats || []).forEach(b => {
+    const opt = document.createElement('option');
+    opt.value = b.id;
+    opt.textContent = `${b.name}${b.bpm ? ' (' + b.bpm + ' BPM)' : ''}`;
+    opt.dataset.bpm = b.bpm || '';
+    beatSelect.appendChild(opt);
+  });
+  beatSelect.addEventListener('change', () => {
+    const selected = beatSelect.options[beatSelect.selectedIndex];
+    const bpmInput = document.getElementById('bpm-input');
+    if (selected?.dataset.bpm && !bpmInput.value) {
+      bpmInput.value = selected.dataset.bpm;
+      updateSyllableReadout();
+    }
+  });
+
   // Build genre grids
   buildGenreGrid('source-genre-grid', null, key => {
     _sourceGenre = key;
     revealTargetGenre();
     updateFlowStep();
+    const targetInput = document.getElementById('target-syllables-input');
+    if (!targetInput.value && GENRES[key]?.syllableDensity) {
+      targetInput.value = GENRES[key].syllableDensity;
+      targetInput.placeholder = `auto: ${GENRES[key].label} default`;
+    }
   });
   buildGenreGrid('target-genre-grid', null, key => {
     _targetGenre = key;
@@ -312,11 +451,29 @@ function expandSetup() {
   // Check for existing session id in URL
   const params = new URLSearchParams(location.search);
   const sessionId = params.get('id');
+  const beatParam = params.get('beat');
   if (sessionId) await loadSession(sessionId);
+  else if (beatParam) {
+    document.getElementById('beat-select').value = beatParam;
+    document.dispatchEvent(new CustomEvent('flowlab:session-loaded'));
+  }
 
   // Wire buttons
   document.getElementById('free-btn').addEventListener('click', runFreeTransform);
   document.getElementById('ai-btn').addEventListener('click', runAITransform);
+  document.getElementById('complete-btn').addEventListener('click', runCompleteDraft);
+  document.getElementById('rhythm-btn').addEventListener('click', runRhythmFit);
+  document.getElementById('repetition-btn').addEventListener('click', checkRepetition);
+  document.getElementById('suggest-tags-btn').addEventListener('click', suggestTags);
+  document.getElementById('tag-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addTag(e.target.value);
+      e.target.value = '';
+    }
+  });
+  document.getElementById('input-lyrics').addEventListener('input', updateSyllableReadout);
+  updateSyllableReadout();
   document.getElementById('save-session-btn').addEventListener('click', saveSession);
   document.getElementById('export-btn').addEventListener('click', exportBundle);
   document.getElementById('setup-edit-btn').addEventListener('click', expandSetup);
@@ -336,10 +493,17 @@ async function loadSession(id) {
 
   document.getElementById('input-lyrics').value  = s.input_lyrics || '';
   document.getElementById('session-notes').value = s.session_notes || '';
+  document.getElementById('bpm-input').value = s.bpm || '';
+  document.getElementById('target-syllables-input').value = s.target_syllables_per_line || '';
   if (s.artist_id) document.getElementById('artist-select').value = s.artist_id;
+  if (s.beat_id) document.getElementById('beat-select').value = s.beat_id;
+  document.dispatchEvent(new CustomEvent('flowlab:session-loaded'));
 
   _sourceGenre = s.source_genre;
   _targetGenre = s.target_genre;
+  _sessionType = s.session_type || 'transform';
+  _tags = s.tags || [];
+  renderTags();
 
   // Re-render genre grids with saved selections
   buildGenreGrid('source-genre-grid', _sourceGenre, key => {
@@ -363,6 +527,7 @@ async function loadSession(id) {
   }
 
   updateFlowStep();
+  updateSyllableReadout();
 }
 
 // ── Validate inputs ───────────────────────────────────────────
@@ -382,12 +547,44 @@ async function getVoiceProfile() {
   if (!artistId) return null;
   const { data: vp } = await window.supabase
     .from('voice_profiles')
-    .select('sample_lyrics')
+    .select('sample_lyrics, extracted_patterns')
     .eq('artist_id', artistId)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
-  return vp?.sample_lyrics || null;
+
+  if (!vp) return null;
+
+  // No fingerprint yet — fall back to the raw sample text, same as before.
+  const fp = vp.extracted_patterns;
+  if (!fp) return vp.sample_lyrics || null;
+
+  // Fingerprint exists — build a richer context block: real computed
+  // stats first, AI theme read second (clearly labeled as a judgment
+  // call, not a hard fact), then the raw sample as reference material.
+  const rhymeStr = fp.commonRhymeEndings?.length
+    ? fp.commonRhymeEndings.map(r => `"-${r.ending}"`).join(', ')
+    : 'none strongly recurring';
+  const wordsStr = fp.topWords?.length
+    ? fp.topWords.map(w => w.word).join(', ')
+    : 'none strongly recurring';
+
+  let context =
+    `VOICE FINGERPRINT (measured from this artist's own past lyrics):\n` +
+    `- Typical syllables/line: ~${fp.avgSyllablesPerLine} (range ${fp.minSyllablesPerLine}-${fp.maxSyllablesPerLine})\n` +
+    `- Recurring rhyme endings: ${rhymeStr}\n` +
+    `- Recurring words: ${wordsStr}`;
+
+  if (fp.aiThemes) {
+    context += `\n- Themes/emotional register (AI read of the sample, not exact): ${fp.aiThemes}`;
+  }
+  if (fp.notablePhrases?.length) {
+    context += `\n- Recurring phrases/ad-libs in their own past lyrics: ${fp.notablePhrases.join(', ')}`;
+  }
+
+  context += `\n\nREFERENCE SAMPLE (their own past lyrics, for tone matching):\n${(vp.sample_lyrics || '').slice(0, 600)}`;
+
+  return context;
 }
 
 // ── Free Transform ────────────────────────────────────────────
@@ -478,7 +675,402 @@ async function runAITransform() {
   }
 }
 
-// ── Render output ─────────────────────────────────────────────
+// ── Complete Draft ────────────────────────────────────────────
+async function runCompleteDraft() {
+  clearError('session-error');
+  const draftLyrics = document.getElementById('input-lyrics').value.trim();
+  if (!draftLyrics) { showError('session-error', 'Type or paste your draft first.'); return; }
+
+  if (_producer.tier === 'free') {
+    showError('session-error', 'Complete Draft requires Pro or Studio tier.');
+    return;
+  }
+
+  const btn     = document.getElementById('complete-btn');
+  const restore = withButtonLoading(btn, 'Completing…');
+  resetPipeline();
+
+  // Reuse the same pipeline animation as AI Transform for consistent feel.
+  const animPromise = animatePipeline(800);
+
+  try {
+    // getSession() can throw a raw exception the same way it can in
+    // runAITransform — same reasoning applies, keep it inside the try.
+    const { data: { session } } = await window.supabase.auth.getSession();
+    const voiceProfile = await getVoiceProfile();
+
+    const res = await fetch('/api/complete', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({
+        draftLyrics,
+        genre:        _sourceGenre || undefined, // optional style, not a source→target pair
+        voiceProfile: voiceProfile || undefined
+      })
+    });
+
+    await animPromise;
+    restore();
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      showError('session-error', err.error || 'Completion failed.');
+      return;
+    }
+
+    const data = await res.json();
+
+    // Normalize into the same shape showOutputSection() already renders,
+    // so no changes are needed to that function:
+    //   completed      -> transformed
+    //   additions      -> changes (section/detail -> rule/detail)
+    //   repetitionFlags -> appended to changes as flagged items
+    const changes = (data.additions || []).map(a => ({ rule: a.section, detail: a.detail }));
+    (data.repetitionFlags || []).forEach(flag => {
+      changes.push({ rule: 'Repetition flag', detail: flag });
+    });
+
+    _sessionType = 'complete';
+    _lastResult  = { transformed: data.completed, changes, genreScore: null, tier: 'ai' };
+    showOutputSection(_lastResult);
+
+  } catch (err) {
+    await animPromise;
+    restore();
+    showError('session-error', err.message || 'Network error.');
+  }
+}
+
+// ── Rhythm Fit ─────────────────────────────────────────────────
+
+// Real per-line syllable count, using the same countSyllables() heuristic
+// nlp.js already uses for Free Transform — not a new/different method.
+function countLineSyllables(line) {
+  const words = line.trim().split(/\s+/).filter(Boolean);
+  return words.reduce((sum, w) => sum + countSyllables(w), 0);
+}
+
+function getTargetSyllablesPerLine() {
+  const manual = parseInt(document.getElementById('target-syllables-input').value, 10);
+  if (manual > 0) return manual;
+  if (_sourceGenre && GENRES[_sourceGenre]?.syllableDensity) return GENRES[_sourceGenre].syllableDensity;
+  return null; // no target set and no genre picked — Fit to Rhythm will ask for one
+}
+
+// Live readout under the input box — real counts, updates as they type.
+function updateSyllableReadout() {
+  const el = document.getElementById('syllable-readout');
+  const text = document.getElementById('input-lyrics').value;
+  const lines = text.split('\n').filter(l => l.trim().length > 0);
+  if (lines.length === 0) { el.textContent = ''; return; }
+
+  const target = getTargetSyllablesPerLine();
+  const counts = lines.map(countLineSyllables);
+
+  if (target) {
+    const offCount = counts.filter(c => Math.abs(c - target) > 1).length;
+    el.textContent = `${lines.length} lines · target ${target} syll/line · ${offCount} line(s) off by more than 1`;
+  } else {
+    const avg = (counts.reduce((a, b) => a + b, 0) / counts.length).toFixed(1);
+    el.textContent = `${lines.length} lines · avg ${avg} syll/line · set a target or pick a genre to see fit`;
+  }
+}
+
+async function runRhythmFit() {
+  clearError('session-error');
+  const text = document.getElementById('input-lyrics').value;
+  const lines = text.split('\n').filter(l => l.trim().length > 0);
+
+  if (lines.length === 0) { showError('session-error', 'Type or paste lyrics first.'); return; }
+
+  const target = getTargetSyllablesPerLine();
+  if (!target) {
+    showError('session-error', 'Set a target syllables/line, or pick a source genre for a default.');
+    return;
+  }
+
+  if (_producer.tier === 'free') {
+    showError('session-error', 'Fit to Rhythm requires Pro or Studio tier.');
+    return;
+  }
+
+  const bpm = parseInt(document.getElementById('bpm-input').value, 10) || null;
+
+  const btn     = document.getElementById('rhythm-btn');
+  const restore = withButtonLoading(btn, 'Fitting…');
+  resetPipeline();
+  const animPromise = animatePipeline(800);
+
+  try {
+    const { data: { session } } = await window.supabase.auth.getSession();
+    const voiceProfile = await getVoiceProfile();
+
+    // Real syllable counts computed client-side, sent as ground truth —
+    // the API never guesses these itself.
+    const linesPayload = lines.map(l => ({
+      text: l,
+      syllables: countLineSyllables(l),
+      target
+    }));
+
+    const res = await fetch('/api/rhythm-fit', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({
+        lines: linesPayload,
+        bpm:   bpm || undefined,
+        genre: _sourceGenre || undefined,
+        voiceProfile: voiceProfile || undefined
+      })
+    });
+
+    await animPromise;
+    restore();
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      showError('session-error', err.error || 'Rhythm fit failed.');
+      return;
+    }
+
+    const data = await res.json();
+
+    // Self-verification: re-count syllables on what the AI actually
+    // returned. Don't trust its claim that a line hits target — check it,
+    // same discipline as the full self-verification pass on FlowLab's
+    // original build. Any line still off gets flagged, not hidden.
+    const changes = [];
+    data.lines.forEach((newLine, i) => {
+      const actualCount = countLineSyllables(newLine);
+      const stillOff = Math.abs(actualCount - target) > 1;
+      const note = data.notes?.find(n => n.line === i + 1)?.detail || '';
+      changes.push({
+        rule: `Line ${i + 1}${stillOff ? ' — still off target' : ''}`,
+        detail: `${actualCount} syll (target ${target}). ${note}`.trim()
+      });
+    });
+
+    const completed = data.lines.join('\n');
+    _sessionType = 'rhythm';
+    _lastResult  = { transformed: completed, changes, genreScore: null, tier: 'ai' };
+    showOutputSection(_lastResult);
+
+  } catch (err) {
+    await animPromise;
+    restore();
+    showError('session-error', err.message || 'Network error.');
+  }
+}
+
+// ── Tags (user-controlled, AI can suggest but never auto-applies) ──
+function renderTags() {
+  const list = document.getElementById('tag-list');
+  list.innerHTML = '';
+  _tags.forEach((tag, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'tag';
+    chip.innerHTML = `${escapeHTML(tag)} <span style="cursor:pointer;opacity:0.6;margin-left:4px;" data-idx="${i}">✕</span>`;
+    chip.querySelector('[data-idx]').addEventListener('click', () => {
+      _tags.splice(i, 1);
+      renderTags();
+    });
+    list.appendChild(chip);
+  });
+}
+
+function addTag(raw) {
+  const tag = raw.trim().toLowerCase();
+  if (!tag || _tags.includes(tag)) return;
+  _tags.push(tag);
+  renderTags();
+}
+
+async function suggestTags() {
+  clearError('session-error');
+  const lyrics = (_lastResult?.transformed || document.getElementById('input-lyrics').value).trim();
+  if (!lyrics) { showError('session-error', 'Write or generate some lyrics first.'); return; }
+
+  if (_producer.tier === 'free') {
+    showError('session-error', 'Tag suggestions require Pro or Studio tier.');
+    return;
+  }
+
+  const btn     = document.getElementById('suggest-tags-btn');
+  const restore = withButtonLoading(btn, '…');
+
+  try {
+    const { data: { session } } = await window.supabase.auth.getSession();
+    const res = await fetch('/api/suggest-tags', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({ lyrics })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      showError('session-error', err.error || 'Suggestion failed.');
+      return;
+    }
+
+    const data = await res.json();
+    (data.tags || []).forEach(addTag); // each suggestion still goes through addTag's dedup
+
+  } catch (err) {
+    showError('session-error', err.message || 'Network error.');
+  } finally {
+    restore();
+  }
+}
+// Compares the current draft against every past session saved for the
+// selected artist. Pure text comparison — rhyme endings and repeated
+// 4-word phrases — using the same rhymeSuffix/lastWord heuristics
+// already in nlp.js. No Gemini call, works on every tier.
+
+function normalizeLine(line) {
+  return line.toLowerCase().replace(/[^a-z0-9'\s]/g, '').trim();
+}
+
+// 4-word sliding-window phrases. Chosen because 3-word phrases are too
+// common to be meaningful (false positives), and lines are often short
+// enough that 5+ words rarely repeats even when it should be flagged.
+function extractPhrases(line, n = 4) {
+  const words = normalizeLine(line).split(/\s+/).filter(Boolean);
+  const phrases = [];
+  for (let i = 0; i <= words.length - n; i++) {
+    phrases.push(words.slice(i, i + n).join(' '));
+  }
+  return phrases;
+}
+
+async function fetchArtistCatalog(artistId) {
+  let query = window.supabase
+    .from('sessions')
+    .select('id, input_lyrics, output_lyrics, created_at')
+    .eq('producer_id', _producer.id)
+    .eq('artist_id', artistId);
+
+  // Exclude the session currently open, so editing a saved draft doesn't
+  // flag it as repeating itself.
+  if (_savedSessionId) query = query.neq('id', _savedSessionId);
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+// Builds two lookup maps from the catalog: rhyme ending -> set of session
+// ids it appears in, and phrase -> set of session ids it appears in.
+function buildCorpusIndex(catalogSessions) {
+  const rhymeMap  = new Map(); // ending -> Set(sessionId)
+  const phraseMap = new Map(); // phrase -> Set(sessionId)
+
+  catalogSessions.forEach(sess => {
+    const text = sess.output_lyrics || sess.input_lyrics || '';
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+    lines.forEach(line => {
+      const ending = rhymeSuffix(lastWord(line));
+      if (ending) {
+        if (!rhymeMap.has(ending)) rhymeMap.set(ending, new Set());
+        rhymeMap.get(ending).add(sess.id);
+      }
+      extractPhrases(line).forEach(phrase => {
+        if (!phraseMap.has(phrase)) phraseMap.set(phrase, new Set());
+        phraseMap.get(phrase).add(sess.id);
+      });
+    });
+  });
+
+  return { rhymeMap, phraseMap };
+}
+
+function renderRepetitionResults(flags, catalogSize) {
+  const box     = document.getElementById('repetition-results');
+  const summary = document.getElementById('repetition-summary');
+  const list     = document.getElementById('repetition-list');
+  box.classList.remove('hidden');
+  list.innerHTML = '';
+
+  if (catalogSize === 0) {
+    summary.textContent = 'No past sessions found for this artist yet — nothing to compare against.';
+    return;
+  }
+
+  if (flags.length === 0) {
+    summary.textContent = `Checked against ${catalogSize} past session(s) for this artist. Nothing flagged.`;
+    return;
+  }
+
+  summary.textContent = `Checked against ${catalogSize} past session(s). ${flags.length} line(s) flagged:`;
+  flags.forEach(f => {
+    const li = document.createElement('li');
+    li.textContent = `Line ${f.lineNum}: ${f.reason}`;
+    list.appendChild(li);
+  });
+}
+
+async function checkRepetition() {
+  clearError('session-error');
+  const artistId = document.getElementById('artist-select').value;
+  if (!artistId) {
+    showError('session-error', 'Pick an artist above first — repetition is checked per artist.');
+    return;
+  }
+
+  const draft = document.getElementById('input-lyrics').value;
+  const lines = draft.split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length === 0) {
+    showError('session-error', 'Type or paste a draft first.');
+    return;
+  }
+
+  const btn     = document.getElementById('repetition-btn');
+  const restore = withButtonLoading(btn, 'Checking…');
+
+  try {
+    const catalog = await fetchArtistCatalog(artistId);
+    const { rhymeMap, phraseMap } = buildCorpusIndex(catalog);
+
+    // Threshold: flag a rhyme ending only if it appears in 2+ DIFFERENT
+    // past sessions (not just once — one prior use isn't a pattern).
+    // Flag a phrase if it appears in ANY past session, since a repeated
+    // 4-word phrase is a much stronger, rarer signal than a rhyme ending.
+    const flags = [];
+    lines.forEach((line, i) => {
+      const ending = rhymeSuffix(lastWord(line));
+      if (ending && rhymeMap.has(ending) && rhymeMap.get(ending).size >= 2) {
+        flags.push({
+          lineNum: i + 1,
+          reason: `rhyme ending "-${ending}" also used in ${rhymeMap.get(ending).size} earlier sessions`
+        });
+      }
+      extractPhrases(line).forEach(phrase => {
+        if (phraseMap.has(phrase)) {
+          flags.push({
+            lineNum: i + 1,
+            reason: `phrase "${phrase}" already appears in an earlier session`
+          });
+        }
+      });
+    });
+
+    renderRepetitionResults(flags, catalog.length);
+
+  } catch (err) {
+    showError('session-error', err.message || 'Repetition check failed.');
+  } finally {
+    restore();
+  }
+}
 function showOutputSection(result) {
   document.getElementById('output-lyrics').value = result.transformed || '';
   document.getElementById('output-section').classList.remove('hidden');
@@ -538,11 +1130,16 @@ async function saveSession() {
     producer_id:   _producer.id,
     artist_id:     artistId || null,
     input_lyrics:  document.getElementById('input-lyrics').value.trim(),
-    source_genre:  _sourceGenre,
-    target_genre:  _targetGenre,
+    source_genre:  _sourceGenre || null,
+    target_genre:  _targetGenre || null,
     output_lyrics: _lastResult.transformed,
     session_notes: notes || null,
-    tier_used:     tierUsed
+    tier_used:     tierUsed,
+    session_type:  _sessionType,
+    tags: _tags,
+    beat_id: document.getElementById('beat-select').value || null,
+    bpm:                       parseInt(document.getElementById('bpm-input').value, 10) || null,
+    target_syllables_per_line: parseInt(document.getElementById('target-syllables-input').value, 10) || null
   };
 
   let error;
@@ -594,6 +1191,163 @@ function escapeHTML(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+</script>
+
+<script type="module">
+  // NOTE: this is a module script, separate scope from the classic script
+  // above. window.GENRES, window.countLineSyllables, and
+  // window.getTargetSyllablesPerLine are reachable because function
+  // declarations and explicit window assignments cross that boundary —
+  // but `let`/`const` globals (like _producer) do NOT, so this script
+  // fetches its own producer/auth state independently rather than
+  // reaching into the classic script's private state.
+  import WaveSurfer from 'https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/wavesurfer.esm.js';
+  import RegionsPlugin from 'https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/plugins/regions.esm.js';
+
+  let _gridWavesurfer = null;
+  let _gridRegions = null;
+  let _currentBeat = null;
+  let _lineGroups = [];
+
+  function escapeHTMLGrid(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // Exact math: bar duration from BPM (4/4 assumed), bar start times from
+  // the calibrated beat-1 offset. No estimation here — either the BPM and
+  // offset are right, in which case this is exact, or they're wrong at
+  // the source (fixable on the Beats page), not approximated here.
+  function computeBarBoundaries(beat) {
+    const barDuration = (60 / beat.bpm) * 4;
+    const totalBars = Math.ceil(Math.max(0, (beat.duration_seconds || 0) - beat.beat_offset_seconds) / barDuration) + 1;
+    const bars = [];
+    for (let i = 0; i <= totalBars; i++) bars.push(beat.beat_offset_seconds + i * barDuration);
+    return bars;
+  }
+
+  function recomputeGroups() {
+    if (!_currentBeat) return;
+    const barsPerLine = parseInt(document.getElementById('bars-per-line').value, 10) || 2;
+    const bars = computeBarBoundaries(_currentBeat);
+    const lines = document.getElementById('input-lyrics').value.split('\n').map(l => l.trim()).filter(Boolean);
+
+    _lineGroups = lines.map((line, i) => {
+      const startBar = i * barsPerLine;
+      const endBar   = startBar + barsPerLine;
+      const startTime = bars[startBar] ?? null;
+      const endTime   = bars[endBar] ?? _currentBeat.duration_seconds ?? null;
+      return {
+        line, startBar, endBar, startTime, endTime,
+        duration: (startTime != null && endTime != null) ? endTime - startTime : null,
+        syllables: window.countLineSyllables(line)
+      };
+    });
+
+    renderGroupList();
+    renderRegions();
+  }
+
+  function renderGroupList() {
+    const target = window.getTargetSyllablesPerLine ? window.getTargetSyllablesPerLine() : null;
+    const list = document.getElementById('beat-grid-list');
+    list.innerHTML = '';
+    _lineGroups.forEach((g, i) => {
+      const row = document.createElement('div');
+      row.className = 'beat-grid-row';
+      row.dataset.groupIndex = i;
+      const durLabel = g.duration != null ? `${g.duration.toFixed(2)}s (real, from BPM)` : 'past end of beat';
+      const targetLabel = target ? ` · genre target ~${target}` : '';
+      row.innerHTML = `
+        <div class="text-xs text-muted">Bars ${g.startBar + 1}–${g.endBar} · ${durLabel}${targetLabel}</div>
+        <div class="text-sm">${escapeHTMLGrid(g.line)} <span class="text-xs text-muted">(${g.syllables} syll)</span></div>
+      `;
+      if (g.startTime != null) {
+        row.addEventListener('click', () => {
+          _gridWavesurfer.setTime(g.startTime);
+          _gridWavesurfer.play();
+        });
+      }
+      list.appendChild(row);
+    });
+  }
+
+  // Regions here are purely visual bar-group markers — no click handling
+  // on the regions themselves, since that part of the plugin's API is
+  // less certain than the list-row click handlers above, which are just
+  // plain DOM listeners I control directly.
+  function renderRegions() {
+    if (!_gridRegions) return;
+    _gridRegions.clearRegions();
+    _lineGroups.forEach((g, i) => {
+      if (g.startTime == null || g.endTime == null) return;
+      _gridRegions.addRegion({
+        start: g.startTime,
+        end: g.endTime,
+        color: i % 2 === 0 ? 'rgba(91,108,249,0.18)' : 'rgba(91,108,249,0.06)',
+        drag: false,
+        resize: false
+      });
+    });
+  }
+
+  function highlightCurrentGroup() {
+    const t = _gridWavesurfer.getCurrentTime();
+    document.querySelectorAll('.beat-grid-row').forEach(row => row.classList.remove('active-group'));
+    const idx = _lineGroups.findIndex(g => g.startTime != null && g.endTime != null && t >= g.startTime && t < g.endTime);
+    if (idx >= 0) {
+      const row = document.querySelector(`.beat-grid-row[data-group-index="${idx}"]`);
+      if (row) row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      if (row) row.classList.add('active-group');
+    }
+  }
+
+  async function onBeatChange() {
+    const beatId = document.getElementById('beat-select').value;
+    const card = document.getElementById('beat-grid-card');
+    if (!beatId) { card.classList.add('hidden'); _currentBeat = null; return; }
+
+    const { data: beat, error } = await window.supabase
+      .from('beats').select('*').eq('id', beatId).single();
+
+    if (error || !beat) { card.classList.add('hidden'); return; }
+    card.classList.remove('hidden');
+
+    if (!beat.bpm) {
+      document.getElementById('beat-grid-list').innerHTML =
+        '<p class="text-sm text-muted">This beat has no BPM recorded — set one on the Beats page first.</p>';
+      return;
+    }
+    _currentBeat = beat;
+
+    const { data: signed } = await window.supabase.storage
+      .from('beats').createSignedUrl(beat.storage_path, 3600);
+
+    if (_gridWavesurfer) _gridWavesurfer.destroy();
+    _gridRegions = RegionsPlugin.create();
+    _gridWavesurfer = WaveSurfer.create({
+      container: '#beat-grid-waveform',
+      waveColor: '#5b6cf9',
+      progressColor: '#3d4ab5',
+      height: 64,
+      plugins: [_gridRegions]
+    });
+    if (signed?.signedUrl) _gridWavesurfer.load(signed.signedUrl);
+    _gridWavesurfer.on('timeupdate', highlightCurrentGroup);
+
+    recomputeGroups();
+  }
+
+  document.getElementById('beat-select').addEventListener('change', onBeatChange);
+  document.getElementById('input-lyrics').addEventListener('input', recomputeGroups);
+  document.getElementById('bars-per-line').addEventListener('input', recomputeGroups);
+  document.getElementById('beat-play-btn').addEventListener('click', () => _gridWavesurfer?.playPause());
+
+  // A session may load with a beat already attached (async, via loadSession()
+  // in the classic script). Listen for its completion event rather than
+  // guessing a timeout.
+  document.addEventListener('flowlab:session-loaded', () => {
+    if (document.getElementById('beat-select').value) onBeatChange();
+  });
 </script>
 
 </body>
