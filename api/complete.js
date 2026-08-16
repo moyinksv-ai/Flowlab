@@ -7,7 +7,7 @@ const { createClient } = require('@supabase/supabase-js');
 const GENRES = require('../genres.js');
 
 const GEMINI_API_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent';
 
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
