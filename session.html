@@ -11,7 +11,7 @@
   <style>
     .beat-grid-row { padding:var(--space-2) var(--space-3); border-radius:6px; cursor:pointer; transition:background 0.15s; }
     .beat-grid-row:hover { background: var(--bg-elevated); }
-    .beat-grid-row.active-group { background: rgba(91,108,249,0.15); border-left:3px solid #5b6cf9; }
+    .beat-grid-row.active-group { background: var(--accent-rec-glow); border-left:3px solid var(--accent-rec); }
   </style>
 </head>
 <body>
@@ -390,7 +390,7 @@ function expandSetup() {
   }
 
   // Load artists into dropdown
-  const { data: artists } = await window.supabase
+  const { data: artists, error: artistsErr } = await window.supabase
     .from('artists')
     .select('id, name, genre')
     .eq('producer_id', _producer.id)
@@ -398,6 +398,12 @@ function expandSetup() {
 
   _artists = artists || [];
   const artistSelect = document.getElementById('artist-select');
+  if (artistsErr) {
+    const opt = document.createElement('option');
+    opt.disabled = true;
+    opt.textContent = `Couldn't load artists: ${artistsErr.message}`;
+    artistSelect.appendChild(opt);
+  }
   _artists.forEach(a => {
     const opt = document.createElement('option');
     opt.value = a.id;
@@ -407,13 +413,19 @@ function expandSetup() {
 
   // Beats — feeds real detected BPM straight into Rhythm Fit instead of
   // requiring it typed in again.
-  const { data: beats } = await window.supabase
+  const { data: beats, error: beatsErr } = await window.supabase
     .from('beats')
     .select('id, name, bpm')
     .eq('producer_id', _producer.id)
     .order('created_at', { ascending: false });
 
   const beatSelect = document.getElementById('beat-select');
+  if (beatsErr) {
+    const opt = document.createElement('option');
+    opt.disabled = true;
+    opt.textContent = `Couldn't load beats: ${beatsErr.message}`;
+    beatSelect.appendChild(opt);
+  }
   (beats || []).forEach(b => {
     const opt = document.createElement('option');
     opt.value = b.id;
@@ -660,7 +672,7 @@ async function runAITransform() {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      showError('session-error', err.error || 'AI transform failed.');
+      showError('session-error', (err.error || 'AI transform failed.') + (err.detail ? ' — ' + err.detail : ''));
       return;
     }
 
@@ -717,7 +729,7 @@ async function runCompleteDraft() {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      showError('session-error', err.error || 'Completion failed.');
+      showError('session-error', (err.error || 'Completion failed.') + (err.detail ? ' — ' + err.detail : ''));
       return;
     }
 
@@ -835,7 +847,7 @@ async function runRhythmFit() {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      showError('session-error', err.error || 'Rhythm fit failed.');
+      showError('session-error', (err.error || 'Rhythm fit failed.') + (err.detail ? ' — ' + err.detail : ''));
       return;
     }
 
@@ -917,7 +929,7 @@ async function suggestTags() {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      showError('session-error', err.error || 'Suggestion failed.');
+      showError('session-error', (err.error || 'Suggestion failed.') + (err.detail ? ' — ' + err.detail : ''));
       return;
     }
 
@@ -1283,7 +1295,7 @@ function escapeHTML(str) {
       _gridRegions.addRegion({
         start: g.startTime,
         end: g.endTime,
-        color: i % 2 === 0 ? 'rgba(91,108,249,0.18)' : 'rgba(91,108,249,0.06)',
+        color: i % 2 === 0 ? 'rgba(242,169,59,0.18)' : 'rgba(242,169,59,0.06)',
         drag: false,
         resize: false
       });
@@ -1326,8 +1338,8 @@ function escapeHTML(str) {
     _gridRegions = RegionsPlugin.create();
     _gridWavesurfer = WaveSurfer.create({
       container: '#beat-grid-waveform',
-      waveColor: '#5b6cf9',
-      progressColor: '#3d4ab5',
+      waveColor: '#F2A93B',
+      progressColor: '#C4801F',
       height: 64,
       plugins: [_gridRegions]
     });
