@@ -106,9 +106,34 @@
 <script src="app.js"></script>
 
 <script type="module">
-  import WaveSurfer from 'https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/wavesurfer.esm.js';
-  import RegionsPlugin from 'https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/plugins/regions.esm.js';
-  import TimelinePlugin from 'https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/plugins/timeline.esm.js';
+  // WaveSurfer/plugins are loaded via dynamic import() inside loadAudioEngine()
+  // below, not static imports — a static `import` failure (blocked by CSP,
+  // network issue, wrong URL) cannot be caught by try/catch and fails
+  // completely silently. Dynamic import() returns a promise, which can be
+  // caught and turned into a real, visible error message instead of a
+  // waveform that just never appears with no explanation.
+  let WaveSurfer, RegionsPlugin, TimelinePlugin;
+  let _audioEngineReady = false;
+
+  async function loadAudioEngine() {
+    if (_audioEngineReady) return true;
+    try {
+      const [wsMod, regionsMod, timelineMod] = await Promise.all([
+        import('https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/wavesurfer.esm.js'),
+        import('https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/plugins/regions.esm.js'),
+        import('https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/plugins/timeline.esm.js')
+      ]);
+      WaveSurfer = wsMod.default;
+      RegionsPlugin = regionsMod.default;
+      TimelinePlugin = timelineMod.default;
+      _audioEngineReady = true;
+      return true;
+    } catch (err) {
+      document.getElementById('analyze-status').textContent =
+        `Couldn't load the audio engine (${err.message || 'network error'}) — check your connection and reload. If this keeps happening, it may be a deployment config issue.`;
+      return false;
+    }
+  }
 
   let _producer   = null;
   let _wavesurfer = null;
@@ -200,7 +225,7 @@
   }
 
   async function handleFileSelect(file) {
-    document.getElementById('analyze-status').textContent = '';
+    document.getElementById('analyze-status').innerHTML = '';
     try {
       validateBeatFile(file);
     } catch (err) {
@@ -211,8 +236,15 @@
     _currentFile = file;
     _beatOffset = 0;
     document.getElementById('offset-display').textContent = 'Not set — tap the waveform on beat 1';
-    document.getElementById('analyze-status').textContent = 'Analyzing tempo…';
+    // Real loading state — VU-meter, not just text, and it starts the
+    // audio engine load in parallel with BPM detection so neither blocks
+    // the other.
+    document.getElementById('analyze-status').innerHTML =
+      '<div class="vu-meter"><span></span><span></span><span></span><span></span><span></span></div>' +
+      '<div class="text-xs text-muted" style="margin-top:4px;">Analyzing tempo…</div>';
     document.getElementById('beat-details').classList.add('hidden');
+
+    const enginePromise = loadAudioEngine();
 
     const arrayBuffer = await file.arrayBuffer();
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -227,7 +259,13 @@
     document.getElementById('beat-name').value = file.name.replace(/\.[^.]+$/, '');
     document.getElementById('beat-details').classList.remove('hidden');
 
-    renderWaveform(file);
+    const engineOk = await enginePromise;
+    if (engineOk) {
+      renderWaveform(file);
+    } else {
+      document.getElementById('play-btn').disabled = true;
+      document.getElementById('play-btn').title = 'Waveform unavailable — see message above';
+    }
   }
 
   function renderWaveform(file) {
@@ -318,7 +356,8 @@
     list.innerHTML = '';
 
     if (error) {
-      list.innerHTML = `<div class="empty-state"><p>Couldn't load beats: ${escapeHTML(error.message)}</p></div>`;
+      list.innerHTML = `<div class="empty-state"><p>Couldn't load beats: ${escapeHTML(error.message)}</p><button class="btn btn-secondary btn-sm" id="retry-beats-btn" style="margin-top:var(--space-2);">Retry</button></div>`;
+      document.getElementById('retry-beats-btn').addEventListener('click', loadBeats);
       return;
     }
 

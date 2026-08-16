@@ -1213,8 +1213,30 @@ function escapeHTML(str) {
   // but `let`/`const` globals (like _producer) do NOT, so this script
   // fetches its own producer/auth state independently rather than
   // reaching into the classic script's private state.
-  import WaveSurfer from 'https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/wavesurfer.esm.js';
-  import RegionsPlugin from 'https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/plugins/regions.esm.js';
+  // Dynamic import, not static — a static import failure (CSP block,
+  // network issue) cannot be caught and fails completely silently, which
+  // is exactly how "no waveform, no explanation" happens. This makes a
+  // failure visible instead.
+  let WaveSurfer, RegionsPlugin;
+  let _audioEngineReady = false;
+
+  async function loadAudioEngine() {
+    if (_audioEngineReady) return true;
+    try {
+      const [wsMod, regionsMod] = await Promise.all([
+        import('https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/wavesurfer.esm.js'),
+        import('https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/plugins/regions.esm.js')
+      ]);
+      WaveSurfer = wsMod.default;
+      RegionsPlugin = regionsMod.default;
+      _audioEngineReady = true;
+      return true;
+    } catch (err) {
+      const list = document.getElementById('beat-grid-list');
+      if (list) list.innerHTML = `<p class="text-sm text-muted">Couldn't load the audio engine (${err.message || 'network error'}) — check your connection and reload.</p>`;
+      return false;
+    }
+  }
 
   let _gridWavesurfer = null;
   let _gridRegions = null;
@@ -1321,7 +1343,12 @@ function escapeHTML(str) {
     const { data: beat, error } = await window.supabase
       .from('beats').select('*').eq('id', beatId).single();
 
-    if (error || !beat) { card.classList.add('hidden'); return; }
+    if (error || !beat) {
+      card.classList.remove('hidden');
+      document.getElementById('beat-grid-list').innerHTML =
+        `<p class="text-sm text-muted">Couldn't load this beat: ${error?.message || 'not found'}</p>`;
+      return;
+    }
     card.classList.remove('hidden');
 
     if (!beat.bpm) {
@@ -1331,8 +1358,17 @@ function escapeHTML(str) {
     }
     _currentBeat = beat;
 
-    const { data: signed } = await window.supabase.storage
+    const engineOk = await loadAudioEngine();
+    if (!engineOk) return; // loadAudioEngine already rendered the error message
+
+    const { data: signed, error: signedErr } = await window.supabase.storage
       .from('beats').createSignedUrl(beat.storage_path, 3600);
+
+    if (signedErr) {
+      document.getElementById('beat-grid-list').innerHTML =
+        `<p class="text-sm text-muted">Couldn't load the audio file: ${signedErr.message}</p>`;
+      return;
+    }
 
     if (_gridWavesurfer) _gridWavesurfer.destroy();
     _gridRegions = RegionsPlugin.create();
