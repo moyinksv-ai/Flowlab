@@ -1,9 +1,12 @@
-// /api/transform.js — Vercel serverless function, CommonJS.
-// Calls Google Gemini 2.5 Flash for AI-tier genre transformation.
-// Auth is verified server-side — the client's tier claim is never trusted.
+// /api/analyze-voice.js — Vercel serverless function, CommonJS.
+// Calls Google Gemini 2.5 Flash for the ONE part of voice analysis that
+// genuinely needs judgment: themes, motifs, emotional register. Everything
+// countable (syllables, rhyme endings, word frequency) is computed
+// client-side in artist.html and passed in as `stats` — this endpoint
+// never re-derives or overrides those numbers.
+// Mirrors the auth/tier/error pattern in transform.js, complete.js, rhythm-fit.js.
 
 const { createClient } = require('@supabase/supabase-js');
-const GENRES = require('../genres.js');
 
 const GEMINI_API_URL =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
@@ -21,8 +24,6 @@ module.exports = async function handler(req, res) {
   }
 
   // ── 2. Create a Supabase client scoped to the caller's JWT ──
-  // RLS naturally restricts all queries to the caller's own data.
-  // No service-role key is required or used anywhere.
   const supabase = createClient(
     process.env.SUPABASE_URL,
     process.env.SUPABASE_ANON_KEY,
@@ -43,49 +44,39 @@ module.exports = async function handler(req, res) {
     .single();
 
   if (producerErr || !producer || producer.tier === 'free') {
-    return res.status(403).json({ error: 'AI transform requires Pro or Studio tier' });
+    return res.status(403).json({ error: 'Voice analysis requires Pro or Studio tier' });
   }
 
   // ── 5. Validate request body ────────────────────────────────
-  const { inputLyrics, sourceGenre, targetGenre, voiceProfile } = req.body || {};
+  const { sampleLyrics, stats } = req.body || {};
 
-  if (!inputLyrics || !sourceGenre || !targetGenre) {
-    return res.status(400).json({ error: 'Missing required fields: inputLyrics, sourceGenre, targetGenre' });
+  if (!sampleLyrics || !sampleLyrics.trim()) {
+    return res.status(400).json({ error: 'Missing required field: sampleLyrics' });
   }
 
   const MAX_CHARS = 20000;
-  if (inputLyrics.length > MAX_CHARS) {
-    return res.status(400).json({ error: `inputLyrics too long — max ${MAX_CHARS} characters` });
+  if (sampleLyrics.length > MAX_CHARS) {
+    return res.status(400).json({ error: `sampleLyrics too long — max ${MAX_CHARS} characters` });
   }
 
-  if (!GENRES[sourceGenre] || !GENRES[targetGenre]) {
-    return res.status(400).json({ error: `Invalid genre. Valid genres: ${Object.keys(GENRES).join(', ')}` });
-  }
-
-  // ── 6. Build prompts ────────────────────────────────────────
-  const voiceContext = voiceProfile
-    ? `\n\nARTIST VOICE PROFILE (preserve these patterns in output):\n${voiceProfile}`
+  // ── 6. Build prompt ─────────────────────────────────────────
+  const statsContext = stats
+    ? `\n\nAlready computed (do not contradict these): avg ${stats.avgSyllablesPerLine} syllables/line, ` +
+      `recurring rhyme endings: ${(stats.commonRhymeEndings || []).map(r => r.ending).join(', ') || 'none flagged'}.`
     : '';
 
   const systemPrompt =
-    `You are a world-class musicologist and songwriter specializing in genre transformation. ` +
-    `Apply this 7-step algorithm: ` +
-    `1) Semantic Parse — preserve core meaning, ` +
-    `2) Structure Map — maintain verse/hook/chorus, ` +
-    `3) Phonetic Mapping — adapt syllable stress, ` +
-    `4) Vocabulary Substitution — target genre lexicon, ` +
-    `5) Cadence Fitting — match syllable density, ` +
-    `6) Rhyme Enforcement — apply target rhyme scheme, ` +
-    `7) Cultural Injection — authentic idioms and markers. ` +
-    `${GENRES[targetGenre].aiPrompt}. ` +
+    `You are analyzing an artist's own lyric samples to build a voice profile that will guide ` +
+    `future lyric generation in their style. This is their own writing, provided by their producer. ` +
+    `Identify: recurring themes and subject matter, emotional register (e.g. vulnerable, boastful, ` +
+    `narrative, abstract), and any distinctive verbal tics or ad-libs that literally appear in the ` +
+    `text. Do not invent phrases that aren't in the source — only quote what's actually there.` +
+    `${statsContext}\n\n` +
     `Return ONLY valid JSON, no markdown, no preamble: ` +
-    `{"transformed":"full lyrics here","changes":[{"rule":"step name","detail":"what changed"}],` +
-    `"genreScore":{"rhythm":0-10,"vocab":0-10,"authenticity":0-10}}`;
+    `{"themes":"2-3 sentence summary of themes and emotional register",` +
+    `"notablePhrases":["short phrases or ad-libs that literally recur in the text, empty array if none"]}`;
 
-  const userPrompt =
-    `Transform these lyrics FROM ${sourceGenre.toUpperCase()} TO ${targetGenre.toUpperCase()}.` +
-    `${voiceContext}\n\nSOURCE LYRICS:\n${inputLyrics}\n\n` +
-    `Make every line feel genuinely native to ${targetGenre}. Preserve the emotion and story.`;
+  const userPrompt = `Sample lyrics:\n\n${sampleLyrics}`;
 
   // ── 7. Call Gemini 2.5 Flash ─────────────────────────────────
   try {
@@ -98,8 +89,8 @@ module.exports = async function handler(req, res) {
           systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: [{ parts: [{ text: userPrompt }] }],
           generationConfig: {
-            temperature: 0.9,
-            maxOutputTokens: 2048
+            temperature: 0.4,
+            maxOutputTokens: 1024
           }
         })
       }
@@ -128,6 +119,6 @@ module.exports = async function handler(req, res) {
     return res.status(200).json(parsed);
 
   } catch (err) {
-    return res.status(500).json({ error: 'Transformation failed', detail: err.message });
+    return res.status(500).json({ error: 'Voice analysis failed', detail: err.message });
   }
 };

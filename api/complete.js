@@ -1,5 +1,6 @@
-// /api/transform.js — Vercel serverless function, CommonJS.
-// Calls Google Gemini 2.5 Flash for AI-tier genre transformation.
+// /api/complete.js — Vercel serverless function, CommonJS.
+// Calls Google Gemini 2.5 Flash to complete/continue a brainstormed lyric draft.
+// Mirrors the auth, tier-gating, and error-handling pattern in transform.js exactly.
 // Auth is verified server-side — the client's tier claim is never trusted.
 
 const { createClient } = require('@supabase/supabase-js');
@@ -36,6 +37,10 @@ module.exports = async function handler(req, res) {
   }
 
   // ── 4. Verify producer exists and is on a paid tier ─────────
+  // Completion requires generation, not substitution — the free-tier
+  // engine (nlp.js/compromise.js) can only rewrite existing words, it
+  // cannot generate new lines. So this feature is AI-tier only, same
+  // gate as transform.js.
   const { data: producer, error: producerErr } = await supabase
     .from('producers')
     .select('tier')
@@ -43,49 +48,63 @@ module.exports = async function handler(req, res) {
     .single();
 
   if (producerErr || !producer || producer.tier === 'free') {
-    return res.status(403).json({ error: 'AI transform requires Pro or Studio tier' });
+    return res.status(403).json({ error: 'Lyric completion requires Pro or Studio tier' });
   }
 
   // ── 5. Validate request body ────────────────────────────────
-  const { inputLyrics, sourceGenre, targetGenre, voiceProfile } = req.body || {};
+  // draftLyrics: the producer's partial/brainstormed lyrics — may contain
+  //   gaps, single lines, a hook with no verses, etc.
+  // genre: OPTIONAL style/vibe to complete toward. Unlike transform.js,
+  //   there is no source→target pair here — completion has one genre
+  //   at most, used for tone, not conversion.
+  // voiceProfile: OPTIONAL, same shape as transform.js — pulled from
+  //   voice_profiles.sample_lyrics when the session has an artist attached.
+  const { draftLyrics, genre, voiceProfile } = req.body || {};
 
-  if (!inputLyrics || !sourceGenre || !targetGenre) {
-    return res.status(400).json({ error: 'Missing required fields: inputLyrics, sourceGenre, targetGenre' });
+  if (!draftLyrics || !draftLyrics.trim()) {
+    return res.status(400).json({ error: 'Missing required field: draftLyrics' });
   }
 
+  // Cap input size — without this, any authenticated Pro/Studio account
+  // (or a leaked token) could send arbitrarily large text and run up
+  // Gemini API cost with no server-side stop.
   const MAX_CHARS = 20000;
-  if (inputLyrics.length > MAX_CHARS) {
-    return res.status(400).json({ error: `inputLyrics too long — max ${MAX_CHARS} characters` });
+  if (draftLyrics.length > MAX_CHARS) {
+    return res.status(400).json({ error: `draftLyrics too long — max ${MAX_CHARS} characters` });
   }
 
-  if (!GENRES[sourceGenre] || !GENRES[targetGenre]) {
+  if (genre && !GENRES[genre]) {
     return res.status(400).json({ error: `Invalid genre. Valid genres: ${Object.keys(GENRES).join(', ')}` });
   }
 
   // ── 6. Build prompts ────────────────────────────────────────
   const voiceContext = voiceProfile
-    ? `\n\nARTIST VOICE PROFILE (preserve these patterns in output):\n${voiceProfile}`
+    ? `\n\nARTIST VOICE PROFILE (write additions in this voice, not a generic one):\n${voiceProfile}`
+    : '';
+
+  const genreContext = genre
+    ? `\n\nSTYLE TARGET: Write completions that fit ${GENRES[genre].label}. ${GENRES[genre].aiPrompt}`
     : '';
 
   const systemPrompt =
-    `You are a world-class musicologist and songwriter specializing in genre transformation. ` +
-    `Apply this 7-step algorithm: ` +
-    `1) Semantic Parse — preserve core meaning, ` +
-    `2) Structure Map — maintain verse/hook/chorus, ` +
-    `3) Phonetic Mapping — adapt syllable stress, ` +
-    `4) Vocabulary Substitution — target genre lexicon, ` +
-    `5) Cadence Fitting — match syllable density, ` +
-    `6) Rhyme Enforcement — apply target rhyme scheme, ` +
-    `7) Cultural Injection — authentic idioms and markers. ` +
-    `${GENRES[targetGenre].aiPrompt}. ` +
+    `You are a co-writer helping a songwriter finish a lyric draft they got stuck on. ` +
+    `The draft may have gaps between sections, an unfinished verse, or just a hook with nothing else. ` +
+    `Your job: ` +
+    `1) Identify what's actually written vs. what's missing (empty verses, unfinished lines, a hook with no second verse), ` +
+    `2) Write ONLY the missing/incomplete parts — never rewrite lines the writer already finished, ` +
+    `3) Match the existing rhyme scheme, syllable rhythm, and emotional register already established in the draft, ` +
+    `4) Avoid repeating words, phrases, or rhyme pairs already used elsewhere in the draft — each new line should ` +
+    `say something the draft hasn't already said, ` +
+    `5) Preserve every word the writer already wrote, exactly, in its original position.` +
+    `${genreContext}${voiceContext}\n\n` +
     `Return ONLY valid JSON, no markdown, no preamble: ` +
-    `{"transformed":"full lyrics here","changes":[{"rule":"step name","detail":"what changed"}],` +
-    `"genreScore":{"rhythm":0-10,"vocab":0-10,"authenticity":0-10}}`;
+    `{"completed":"the full draft with your additions merged in, in final order",` +
+    `"additions":[{"section":"e.g. Verse 2 line 3","detail":"what you added and why it fits"}],` +
+    `"repetitionFlags":["any word/phrase from the ORIGINAL draft that repeats too often, if any"]}`;
 
   const userPrompt =
-    `Transform these lyrics FROM ${sourceGenre.toUpperCase()} TO ${targetGenre.toUpperCase()}.` +
-    `${voiceContext}\n\nSOURCE LYRICS:\n${inputLyrics}\n\n` +
-    `Make every line feel genuinely native to ${targetGenre}. Preserve the emotion and story.`;
+    `Complete this lyric draft. Fill the gaps and finish what's unfinished — do not rewrite what's already there:\n\n` +
+    `${draftLyrics}`;
 
   // ── 7. Call Gemini 2.5 Flash ─────────────────────────────────
   try {
@@ -128,6 +147,6 @@ module.exports = async function handler(req, res) {
     return res.status(200).json(parsed);
 
   } catch (err) {
-    return res.status(500).json({ error: 'Transformation failed', detail: err.message });
+    return res.status(500).json({ error: 'Completion failed', detail: err.message });
   }
 };
