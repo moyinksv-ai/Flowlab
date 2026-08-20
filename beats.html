@@ -9,8 +9,8 @@
   <link rel="icon" href="/icon-192.png">
   <link rel="stylesheet" href="style.css">
   <style>
-    #waveform { border-radius: var(--radius-md, 8px); overflow: hidden; background: var(--bg-elevated); }
-    #wave-timeline { background: var(--bg-elevated); }
+    #waveform { border-radius: var(--radius-md, 8px); overflow: hidden; background: var(--bg-elevated); height: 96px; min-height: 96px; }
+    #wave-timeline { background: var(--bg-elevated); height: 20px; min-height: 20px; }
     .beat-row { display:flex; justify-content:space-between; align-items:center; padding:var(--space-3); border-bottom:1px solid var(--border-subtle,rgba(255,255,255,0.08)); }
   </style>
 </head>
@@ -298,7 +298,10 @@
   }
 
   async function saveBeat() {
-    if (!_currentFile) return;
+    if (!_currentFile) {
+      document.getElementById('analyze-status').textContent = 'Choose a file first.';
+      return;
+    }
     const name = document.getElementById('beat-name').value.trim();
     const bpm  = parseInt(document.getElementById('bpm-detected-input').value, 10) || null;
     const artistId = document.getElementById('beat-artist-select').value || null;

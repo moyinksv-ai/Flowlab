@@ -9,6 +9,7 @@
   <link rel="icon" href="/icon-192.png">
   <link rel="stylesheet" href="style.css">
   <style>
+    #beat-grid-waveform { border-radius: 8px; overflow: hidden; background: var(--bg-elevated); height: 64px; min-height: 64px; }
     .beat-grid-row { padding:var(--space-2) var(--space-3); border-radius:6px; cursor:pointer; transition:background 0.15s; }
     .beat-grid-row:hover { background: var(--bg-elevated); }
     .beat-grid-row.active-group { background: var(--accent-rec-glow); border-left:3px solid var(--accent-rec); }
@@ -71,6 +72,7 @@
           <select id="beat-select">
             <option value="">No beat</option>
           </select>
+          <p id="beat-select-hint" class="text-xs text-muted" style="margin-top:4px;"></p>
         </div>
 
         <div class="form-group">
@@ -433,6 +435,10 @@ function expandSetup() {
     opt.dataset.bpm = b.bpm || '';
     beatSelect.appendChild(opt);
   });
+  if (!beatsErr && (!beats || beats.length === 0)) {
+    document.getElementById('beat-select-hint').innerHTML =
+      'No beats uploaded yet. <a href="beats.html" style="color:var(--accent-text);">Upload one →</a>';
+  }
   beatSelect.addEventListener('change', () => {
     const selected = beatSelect.options[beatSelect.selectedIndex];
     const bpmInput = document.getElementById('bpm-input');
