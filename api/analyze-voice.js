@@ -89,7 +89,6 @@ module.exports = async function handler(req, res) {
           systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: [{ parts: [{ text: userPrompt }] }],
           generationConfig: {
-            temperature: 0.4,
             maxOutputTokens: 1024
           }
         })
@@ -102,7 +101,12 @@ module.exports = async function handler(req, res) {
     }
 
     const data = await response.json();
-    const raw  = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    // Gemini 3.x can return multiple parts, including internal "thought"
+    // reasoning parts mixed with the real answer (sometimes with empty
+    // text). Grabbing parts[0] unconditionally breaks when the first part
+    // is a thought, not the answer — filter those out and join what's left.
+    const responseParts = data.candidates?.[0]?.content?.parts || [];
+    const raw = responseParts.filter(p => !p.thought).map(p => p.text || '').join('');
     const clean = raw.replace(/```json|```/g, '').trim();
 
     let parsed;
